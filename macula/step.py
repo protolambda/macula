@@ -15,16 +15,59 @@ class BlockHistory(Vector[Bytes32, 256]):
 # but otherwise not much cost for unused space
 class Memory(List[uint8, 64 << 20]):
 
-    def append_zero_32_bytes(self):
+    def append_zero_32_bytes(self) -> None:
         # TODO: if the length aligns to 32, this can be optimized
         for i in range(32):
             self.append(0)
 
 
+def endian_swap_b32(v: Bytes32) -> Bytes32:
+    return Bytes32(v[::-1])
+
+
 # EVM stack is max 1024 words
 class Stack(List[Bytes32, 1024]):
 
-    def back(self, n: int) -> Bytes32:
+    def push_b32(self, b: Bytes32) -> None:
+        self.append(b)
+
+    def push_u256(self, b: uint256) -> None:  # TODO: hacky, SSZ uses little-endian, EVM uses big-endian
+        self.append(endian_swap_b32(b.encode_bytes()))
+
+    def pop_b32(self) -> Bytes32:
+        v = self[len(self)-1]
+        self.pop()
+        return v
+
+    def pop_u256(self) -> uint256:
+        v = uint256.decode_bytes(endian_swap_b32(self[len(self)-1]))
+        self.pop()
+        return v
+
+    def dup(self, n: int) -> None:
+        self.append(self[len(self)-n])
+
+    def swap(self, n: int) -> None:
+        l = len(self)
+        a = self[l-1]
+        b = self[l-n]
+        self[l-n] = a
+        self[l-1] = b
+
+    def peek_b32(self) -> Bytes32:
+        return self[len(self)-1]
+
+    def peek_u256(self) -> uint256:
+        return uint256.decode_bytes(endian_swap_b32(self[len(self)-1]))
+
+    # like peek, but write instead of read, to avoid pop/push overhead
+    def tweak_b32(self, v: Bytes32):
+        self[len(self)-1] = v
+
+    def tweak_u256(self, v: uint256):
+        self[len(self)-1] = endian_swap_b32(v.encode_bytes())
+
+    def back_b32(self, n: int) -> Bytes32:
         length = len(self)
         if n+1 > length:
             raise Exception("bad stack access, interpreter bug")
@@ -132,6 +175,6 @@ class Step(Container):
         self.gas = pre_gas - delta
         return True
 
-    def return_gas(self, delta: uint64):
+    def return_gas(self, delta: uint64) -> None:
         # no overflow, assuming gas total is capped within uint64
         self.gas += delta
