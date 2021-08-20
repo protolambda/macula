@@ -4,6 +4,7 @@ from remerkleable.basic import uint8
 class OpCode(Enum):
     STOP = 0
     CALL = 0xf1
+    JUMPDEST = 0x5b
     PUSH = 0x60
     # TODO
 

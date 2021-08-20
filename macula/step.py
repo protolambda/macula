@@ -4,7 +4,8 @@ from remerkleable.basic import uint8, uint64, uint256, boolean
 from .opcodes import OpCode
 
 class Address(ByteVector[20]):
-    pass
+    def to_b32(self) -> Bytes32:
+        return Bytes32(bytes(self).rjust(32))
 
 
 class BlockHistory(Vector[Bytes32, 256]):
@@ -88,10 +89,32 @@ class Code(List[uint8, 0x6000]):
         else:
             return OpCode(self[pc])
 
+    def valid_jump_dest(self, dest: uint256) -> bool:
+        # PC cannot go beyond len(code) and certainly can't be bigger than 63bits.
+        # Don't bother checking for JUMPDEST in that case.
+        if int(dest) >= len(self):
+            return False
+        # Only JUMPDESTs allowed for destinations
+        if self[dest] != uint8(OpCode.CALL.value):
+            return False
+        # TODO: jump-dest analysis is missing! Cannot jump into data segment.
+        # we likely want to cache jump-dest analysis in the step data to not repeat it for every step
+        return True
+
 
 # Assuming a tx input can be max 400M gas, and 4 gas is paid per zero byte, then put a 100M limit on input.
 class Input(List[uint8, 100_000_000]):
-    pass
+    # returns a slice from the data based on the start and size and pads
+    # up to size with zero's. This function is overflow safe.
+    def get_data_b32(self, start: uint64) -> Bytes32:
+        length = len(self)
+        if start > length:
+            return Bytes32()
+        end = start + 32
+        if end > length:
+            return Bytes32(bytes(self[start:length]).ljust(32))
+        else:
+            return Bytes32(self[start:length])
 
 
 # 1024 words to track sub-step progress. Not to be confused with the memory scratchpad slots.
@@ -119,7 +142,7 @@ class Step(Container):
     gas_limit: uint64
     block_number: uint64
     time: uint64
-    difficulty: Bytes32
+    difficulty: uint256
     base_fee: uint256
     # Tx scope
     # ------------------
@@ -145,7 +168,7 @@ class Step(Container):
     code_addr: Address
     input: Input
     gas: uint64
-    value: Bytes32
+    value: uint256
     # Make storage read-only, to support STATIC-CALL
     read_only: boolean
     # Execution scope
