@@ -1,7 +1,7 @@
 from remerkleable.complex import Container, Vector, List
 from remerkleable.byte_arrays import Bytes32, ByteVector
 from remerkleable.basic import uint8, uint64, uint256, boolean
-
+from .opcodes import OpCode
 
 class Address(ByteVector[20]):
     pass
@@ -14,13 +14,21 @@ class BlockHistory(Vector[Bytes32, 256]):
 # TODO: 64 MiB memory maximum enough or too much? Every 2x makes the tree a layer deeper,
 # but otherwise not much cost for unused space
 class Memory(List[uint8, 64 << 20]):
-    pass
+
+    def append_zero_32_bytes(self):
+        # TODO: if the length aligns to 32, this can be optimized
+        for i in range(32):
+            self.append(0)
 
 
 # EVM stack is max 1024 words
 class Stack(List[Bytes32, 1024]):
-    pass
 
+    def back(self, n: int) -> Bytes32:
+        length = len(self)
+        if n+1 > length:
+            raise Exception("bad stack access, interpreter bug")
+        return self[length - n - 1]
 
 # Needs to be as big as memory, all of it can be returned
 class ReturnData(List[uint8, 64 << 20]):
@@ -30,7 +38,12 @@ class ReturnData(List[uint8, 64 << 20]):
 # See https://github.com/ethereum/EIPs/blob/master/EIPS/eip-170.md
 # ~24.5 KB
 class Code(List[uint8, 0x6000]):
-    pass
+
+    def get_op(self, pc: uint64) -> OpCode:
+        if pc >= self.length():
+            return OpCode.STOP
+        else:
+            return OpCode(self[pc])
 
 
 # Assuming a tx input can be max 400M gas, and 4 gas is paid per zero byte, then put a 100M limit on input.
@@ -110,3 +123,15 @@ class Step(Container):
     return_to_step: uint64
     # Depending on the unwind mode: continue/return/out-of-gas/etc.
     unwind: uint64
+
+    # return false if out of gas
+    def use_gas(self, delta: uint64) -> bool:
+        pre_gas = self.gas
+        if delta > pre_gas:
+            return False
+        self.gas = pre_gas - delta
+        return True
+
+    def return_gas(self, delta: uint64):
+        # no overflow, assuming gas total is capped within uint64
+        self.gas += delta
