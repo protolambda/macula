@@ -1,5 +1,5 @@
 from typing import Callable, Protocol
-from .step import Step
+from macula.step import Step
 
 
 class StepsTrace(Protocol):
