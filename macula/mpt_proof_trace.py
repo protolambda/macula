@@ -1,4 +1,4 @@
-from .trace import StepsTrace
+from .trace import StepsTrace, Processor, MPT
 from .step import *
 
 
@@ -49,21 +49,11 @@ def decode_path(encoded_path: bytes) -> (bool, uint256, int):
     return terminating, path_u256, path_nibble_len
 
 
+def make_reader_step_gen(trie: MPT) -> Processor:
+    def reader_step_gen(trac: StepsTrace) -> Step:
+        last = trac.last()
+        next = last.copy()
 
-
-# TODO: init claim with mpt_current_root set to state-root (or account storage root)
-def next_mpt_step(trac: StepsTrace) -> Step:
-    last = trac.last()
-    next = last.copy()
-    mpt_mode = last.mpt_mode
-
-    # TODO: define flag to switch between global/account work
-    if last.mpt_global:
-        trie = trac.world_accounts()
-    else:
-        trie = trac.account_storage(last.mpt_address_target)
-
-    if mpt_mode == 0:  # do we have a mpt_current_root?
         if last.mpt_lookup_key_nibbles == last.mpt_lookup_nibble_depth:  # have we arrived yet?
             if len(last.mpt_current_root) < 32:
                 value = last.mpt_current_root
@@ -71,10 +61,10 @@ def next_mpt_step(trac: StepsTrace) -> Step:
                 value = trie.get_node(last.mpt_current_root)
                 assert mpt_hash(value) == next.mpt_current_root
             next.mpt_value = value
-            next.mpt_mode = 1
+            next.mpt_mode = last.mpt_mode_on_finish
             return next
 
-        # If yes, then expand it
+        # If not arrived yet, then expand it
         data = trie.get_node(last.mpt_current_root)
         # check that the provided MPT node witness data matches the request node root
         assert mpt_hash(data) == next.mpt_current_root
@@ -82,8 +72,10 @@ def next_mpt_step(trac: StepsTrace) -> Step:
         data_li = rlp_decode_list(data)
         if len(data_li) == 0:
             next.mpt_current_root = Bytes32()
-            # stop recursing deeper
-            next.mpt_mode = 1
+            # stop recursing deeper, null value
+            next.mpt_value = b""
+            next.mpt_mode = last.mpt_mode_on_finish
+            return next
 
         elif len(data_li) == 2:
             encoded_path = data_li[0]  # path is the first value of the tuple, regardless of extension/leaf type choice
@@ -98,9 +90,8 @@ def next_mpt_step(trac: StepsTrace) -> Step:
                 assert new_depth == last.mpt_lookup_key_nibbles  # check we have read the full key
                 next.mpt_lookup_nibble_depth = new_depth
 
-                # no more root to expand
+                # it's a leaf, but we'll expand it if it was hashed (>= 32 bytes)
                 next.mpt_current_root = data_li[1]
-                # TODO: store value, or expand to full RLP if hashed
 
                 # stay in MPT mode 0, this is a new mpt_current_root to expand
                 return next
@@ -145,7 +136,51 @@ def next_mpt_step(trac: StepsTrace) -> Step:
             next.mpt_lookup_nibble_depth = new_depth
             return next
 
-    if mpt_mode == 1:  #
+    return reader_step_gen
+
+
+def write_start_step(trac: StepsTrace) -> Step:
+    last = trac.last()
+    next = last.copy()
+    if len(last.mpt_value) >= 32:
+        next.mpt_current_root = mpt_hash(last.mpt_value)
+    else:
+        next.mpt_current_root = last.mpt_value
+    next.mpt_mode = 3  # continue to writing
+    return next
+
+
+# TODO: init claim with mpt_current_root set to state-root (or account storage root)
+def next_mpt_step(trac: StepsTrace) -> Step:
+    last = trac.last()
+    mpt_mode = last.mpt_mode
+
+    # TODO: define flag to switch between global/account work
+    if last.mpt_global:
+        trie = trac.world_accounts()
+    else:
+        trie = trac.account_storage(last.mpt_address_target)
+
+    if mpt_mode == 0:  # returning, back to MPT user
+        caller = trac.by_index(next.return_to_step)
+        next = caller.copy()
+        # remember the value we read
+        next.mpt_value = last.mpt_value
+        # remember the last node root we touched (top or bottom, depending on read/write)
+        next.mpt_current_root = last.mpt_current_root
+        return next
+
+    if mpt_mode == 1:  # reading
+        proc = make_reader_step_gen(trie)
+        return proc(trac)
+
+    if mpt_mode == 2:  # writing start (value to be mapped to node root)
+        return write_start_step(trac)
+
+    if mpt_mode == 3:  # writing
+
+
+
         # TODO: check if we're reading or writing
         # If reading only, return the decoded last.mpt_input_rlp
         # If writing, then based on traversal of a write-key, modify the nodes we just passed by,

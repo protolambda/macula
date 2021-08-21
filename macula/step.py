@@ -207,16 +207,13 @@ class Step(Container):
     # On a read: recurse from top to bottom, then store bottom node
     # On a write: recurse from top to bottom, then unwind back
 
-    # 0 = reading_claim
-    # 1 = reading_proof
-    #
+    # Instructs how to execute
     mpt_mode: uint8
+    # after finishing the mode, continue with this next mode.
+    mpt_mode_on_finish: uint8
 
-
-    mpt_path_type_nibble: uint8
-
-
-
+    # the step index that has step.mpt_value that represents the parent of the current node
+    mpt_parent_node_step: uint64
 
     # hash of the current node
     mpt_current_root: ByteList[32]  # max 32 bytes. Smaller values than 32 are not hashed.
