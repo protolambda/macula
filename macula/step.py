@@ -217,6 +217,9 @@ class Step(Container):
 
     # hash of the current node
     mpt_current_root: ByteList[32]  # max 32 bytes. Smaller values than 32 are not hashed.
+    # if the node corresponding to the key cannot be found
+    # traversal stops with this failure marker. Non-zero if failure.
+    mpt_fail_lookup: uint8
 
     # Note: First nibble of key = most significant nibble of uint256
     # I.e., to read the next nibble, shift left by 4 bits
@@ -227,6 +230,8 @@ class Step(Container):
     mpt_lookup_nibble_depth: uint64
 
     mpt_value: ByteList[2048]
+
+    mpt_write_root: ByteList[32]
 
     # return false if out of gas
     def use_gas(self, delta: uint64) -> bool:

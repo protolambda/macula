@@ -2,9 +2,12 @@ from typing import Callable, Protocol
 from .step import Step, Address, Bytes32
 
 
+# raw node access, can be tracked as global dictionary without pruning.
+# Any node that is not found locally could be fetched lazily from an external trie.
 class MPT(Protocol):
     def get_node(self, key: bytes) -> bytes: ...
-    def put_node(self, key: bytes, value: bytes) -> None: ...
+    # note: key is computed as hash of the raw value (an RLP encoded MPT node)
+    def put_node(self, raw: bytes) -> None: ...
 
 
 class StepsTrace(Protocol):
