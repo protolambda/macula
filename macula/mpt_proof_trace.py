@@ -164,13 +164,11 @@ def make_reader_step_gen(trie: MPT) -> Processor:
                 return next
 
         elif len(data_li) == 17:
-            branch_nodes = data_li
-            assert len(branch_nodes) == 17
 
             if last.mpt_lookup_nibble_depth == last.mpt_lookup_key_nibbles:
                 # we arrived at the key depth already, there are other nodes with longer keys,
                 # but we only care about the vt node (17th of branch)
-                next.mpt_current_root = branch_nodes[16]
+                next.mpt_current_root = data_li[16]
                 # stay in MPT mode 0, this is a new mpt_current_root to expand
                 return next
 
@@ -184,7 +182,7 @@ def make_reader_step_gen(trie: MPT) -> Processor:
             branch_lookup_nibble = (last.mpt_lookup_key << (last.mpt_lookup_nibble_depth*4)) >> (256 - 4)
 
             # new node to expand into
-            next.mpt_current_root = branch_nodes[branch_lookup_nibble]
+            next.mpt_current_root = data_li[branch_lookup_nibble]
             next.mpt_lookup_nibble_depth = new_depth
             return next
 
@@ -229,11 +227,11 @@ def make_writer_step_gen(trie: MPT) -> Processor:
             terminating, path_u256, path_nibble_len = decode_path(encoded_path)
 
             if terminating:  # handle leaf
-                key_remainder = last.mpt_lookup_key << (last.mpt_lookup_nibble_depth*4)
-                new_depth = last.mpt_lookup_nibble_depth + path_nibble_len
+                key_remainder = parent.mpt_lookup_key << (parent.mpt_lookup_nibble_depth*4)
+                new_depth = parent.mpt_lookup_nibble_depth + path_nibble_len
 
                 # check we have read the full key, not more and not less
-                if new_depth == last.mpt_lookup_key_nibbles:
+                if new_depth == parent.mpt_lookup_key_nibbles:
                     # this is a key of equal length, but might not yet be it
                     if key_remainder == path_u256:
                         # this is the node we are looking for!
@@ -250,37 +248,32 @@ def make_writer_step_gen(trie: MPT) -> Processor:
                         # stay in MPT mode 0, this is a new mpt_write_root to bubble up
                         return next
                     else:
-        # TODO -------- below is copy pasta from read routine, now complete the translation to write routine -----
                         # this is just a sibling node with equal key length and common prefix
-                        next.mpt_fail_lookup = 2
-                        next.mpt_mode = last.mpt_mode_on_finish
+                        # TODO: create extension + branch node with single sibling + leaf x 2
                         return next
-                elif new_depth < last.mpt_lookup_key_nibbles:
+                elif new_depth < parent.mpt_lookup_key_nibbles:
                     # the node we are looking for does not exist,
                     # but another leaf exists with a shorter key that is a prefix of our key
-                    next.mpt_fail_lookup = 3
-                    next.mpt_mode = last.mpt_mode_on_finish
+                    # TODO: create extension + branch node with vt + leaf
                     return next
-                elif new_depth > last.mpt_lookup_key_nibbles:
+                elif new_depth > parent.mpt_lookup_key_nibbles:
                     # the node we are looking for does not exist,
                     # but another leaf exists with a longer key of which our key is a prefix
-                    next.mpt_fail_lookup = 4
-                    next.mpt_mode = last.mpt_mode_on_finish
+                    # TODO: create extension + branch node with vt + leaf
                     return next
 
             else:  # handle extension
 
-                new_depth = last.mpt_lookup_nibble_depth + path_nibble_len
+                new_depth = parent.mpt_lookup_nibble_depth + path_nibble_len
                 # full key may be read if we extend to a branch node
                 # that has other longer keys and ours in the special 17th slot
-                if new_depth >= last.mpt_lookup_key_nibbles:
+                if new_depth >= parent.mpt_lookup_key_nibbles:
                     # extension too long, cannot find the node
-                    next.mpt_fail_lookup = 5
-                    next.mpt_mode = last.mpt_mode_on_finish
+                    # TODO: shorten extension, put branch node, continue extension
                     return next
                 else:
                     # extension size is on-track, check if it matches
-                    key_remainder = last.mpt_lookup_key << (last.mpt_lookup_nibble_depth*4)
+                    key_remainder = parent.mpt_lookup_key << (parent.mpt_lookup_nibble_depth*4)
                     # mask out the part of the key that should match this entry
                     mask = (uint256(1) << (path_nibble_len*4)) - 1
                     shifted_mask = mask << (256 - path_nibble_len*4)
@@ -288,42 +281,40 @@ def make_writer_step_gen(trie: MPT) -> Processor:
 
                     if key_part != path_u256:
                         # extension leads to some other key, not what we are looking for
-                        next.mpt_fail_lookup = 6
-                        next.mpt_mode = last.mpt_mode_on_finish
+                        # TODO shorten extension, put branch node, continue two extensions
                         return next
                     else:
-                        # extension matches, it's on our path, we can find the node!
+                        # extension matches, it's on our path, we can reuse it
 
                         # the value of the extension will be the next hashed node to expand into
-                        next.mpt_current_root = data_li[1]
+                        parent_data_li[1] = last.mpt_write_root
+                        # TODO bubble up
 
-                next.mpt_lookup_nibble_depth = new_depth
-                # stay in MPT mode 0, this is a new mpt_current_root to expand
+                # stay in MPT mode 0, this is a new mpt_write_root to bubble up
                 return next
 
-        elif len(data_li) == 17:
-            branch_nodes = data_li
-            assert len(branch_nodes) == 17
+        elif len(parent_data_li) == 17:
 
-            if last.mpt_lookup_nibble_depth == last.mpt_lookup_key_nibbles:
+            if parent.mpt_lookup_nibble_depth == parent.mpt_lookup_key_nibbles:
                 # we arrived at the key depth already, there are other nodes with longer keys,
                 # but we only care about the vt node (17th of branch)
-                next.mpt_current_root = branch_nodes[16]
-                # stay in MPT mode 0, this is a new mpt_current_root to expand
+                parent_data_li[16] = last.mpt_write_root
+                # TODO bubble up
+                # stay in MPT mode 0, this is a new mpt_write_root to expand
                 return next
 
             # if taking any other branch node value than the depth of the node itself, we go 1 nibble deeper,
             # and must not exceed the max depth (all keys are 32 bytes or less,
             # e.g. RLP-encoded receipt-trie indices as key)
-            new_depth = last.mpt_lookup_nibble_depth + 1
+            new_depth = parent.mpt_lookup_nibble_depth + 1
             assert new_depth <= 32
 
             # get the top 4 bits, after the lookup so far
-            branch_lookup_nibble = (last.mpt_lookup_key << (last.mpt_lookup_nibble_depth*4)) >> (256 - 4)
+            branch_lookup_nibble = (parent.mpt_lookup_key << (parent.mpt_lookup_nibble_depth*4)) >> (256 - 4)
 
-            # new node to expand into
-            next.mpt_current_root = branch_nodes[branch_lookup_nibble]
-            next.mpt_lookup_nibble_depth = new_depth
+            # new node to bubble up into
+            parent_data_li[branch_lookup_nibble] = last.mpt_write_root
+            # TODO bubble up
             return next
 
     return write_step
