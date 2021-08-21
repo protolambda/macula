@@ -23,6 +23,33 @@ def mpt_hash(data: bytes) -> Bytes32:
 # 2        0010    |   terminating (leaf)         even
 # 3        0011    |   terminating (leaf)         odd
 
+def strip_nibble(v: uint256) -> uint256:
+    return v >> 4
+
+
+def read_nibble(v: uint256, i: int) -> int:
+    return (int(v) >> (i*4)) & 0x0F
+
+
+def decode_path(encoded_path: bytes) -> (bool, uint256, int):
+    if len(encoded_path) == 0:
+        return 0, 0, 0
+    assert len(encoded_path) <= 32 + 1  # keys are at most 32 bytes in ethereum, even though MPT supports any length
+    flag_nibble = (encoded_path[0] & 0xF0) >> 4
+    terminating = flag_nibble & 0b0010 != 0
+    evenlen = flag_nibble & 0b0001 == 0
+    assert flag_nibble & 0b1100 == 0
+    path_u256 = uint256(int.from_bytes(encoded_path[1:].ljust(32), byteorder='big'))
+    path_nibble_len = len(encoded_path[1:]) * 2
+    if not evenlen:  # if odd, then the 4 bits "after" (when hex encoded) the flag bits are part of the path
+        assert path_nibble_len < 32
+        path_u256 >>= 4
+        path_u256 |= uint256(encoded_path[0] & 0x0F) << (256 - 4)
+        path_nibble_len += 1
+    return terminating, path_u256, path_nibble_len
+
+
+
 
 # TODO: init claim with mpt_current_root set to state-root (or account storage root)
 def next_mpt_step(trac: StepsTrace) -> Step:
@@ -36,7 +63,17 @@ def next_mpt_step(trac: StepsTrace) -> Step:
     else:
         trie = trac.account_storage(last.mpt_address_target)
 
-    if mpt_mode == 0:  # do we have a claim to expand?
+    if mpt_mode == 0:  # do we have a mpt_current_root?
+        if last.mpt_lookup_key_nibbles == last.mpt_lookup_nibble_depth:  # have we arrived yet?
+            if len(last.mpt_current_root) < 32:
+                value = last.mpt_current_root
+            else:
+                value = trie.get_node(last.mpt_current_root)
+                assert mpt_hash(value) == next.mpt_current_root
+            next.mpt_value = value
+            next.mpt_mode = 1
+            return next
+
         # If yes, then expand it
         data = trie.get_node(last.mpt_current_root)
         # check that the provided MPT node witness data matches the request node root
@@ -51,81 +88,62 @@ def next_mpt_step(trac: StepsTrace) -> Step:
         elif len(data_li) == 2:
             encoded_path = data_li[0]  # path is the first value of the tuple, regardless of extension/leaf type choice
             assert len(encoded_path) >= 1
+            terminating, path_u256, path_nibble_len = decode_path(encoded_path)
 
-            # TODO: left or right 4 bytes?
-            first_nibble = encoded_path[0] & 0x0f
-            assert first_nibble < 4
-            if first_nibble == 0:  # even length extension path
-                # strip even-length nibble key prefix from key, and check it against our local key
-                prefix = encoded_path[1:]
-                # validate prefix
-                assert last.mpt_lookup_depth + len(prefix) * 2 <= 32 * 2
-                assert prefix == last.mpt_lookup_key[last.mpt_lookup_depth:last.mpt_lookup_depth + len(prefix)]
-                # strip prefix from the key that we use for the next lookup
-                next.mpt_lookup_key = last.mpt_lookup_key[len(prefix):]
-                # continue from this deeper node (2nd value of the extension tuple)
-                next.mpt_current_root = data_li[1]  # TODO: does this RLP value need decoding?
-                next.mpt_lookup_depth += len(prefix) * 2
-                # stay in MPT mode 0, this is another claim to expand
+            if terminating:  # handle leaf
+                key_remainder = last.mpt_lookup_key << (last.mpt_lookup_nibble_depth*4)
+                # ensure we have the right key remainder
+                assert key_remainder == path_u256
+                new_depth = last.mpt_lookup_nibble_depth + path_nibble_len
+                assert new_depth == last.mpt_lookup_key_nibbles  # check we have read the full key
+                next.mpt_lookup_nibble_depth = new_depth
+
+                # no more root to expand
+                next.mpt_current_root = data_li[1]
+                # TODO: store value, or expand to full RLP if hashed
+
+                # stay in MPT mode 0, this is a new mpt_current_root to expand
                 return next
-            if first_nibble == 1:  # odd length extension path
-                # strip odd-length nibble key prefix from key, and check it against our local key
-                prefix = encoded_path[
-                         1:]  # TODO: this is not right, need to split the nibble, not the byte, but which nibble?
-
-                assert last.mpt_lookup_depth + len(prefix) * 2 - 1 <= 32 * 2
-                # TODO: nibble alignment not right
-                assert prefix == last.mpt_lookup_key[last.mpt_lookup_depth:last.mpt_lookup_depth + len(prefix)]
-
-                # continue from this deeper node (2nd value of the extension tuple)
-                next.mpt_current_root = data_li[1]  # TODO: does this RLP value need decoding?
-                next.mpt_lookup_depth += len(prefix) * 2 - 1
-                # stay in MPT mode 0, this is another claim to expand
+            else:  # handle extension
+                key_remainder = last.mpt_lookup_key << (last.mpt_lookup_nibble_depth*4)
+                # mask out the part of the key that should match this entry
+                mask = (uint256(1) << (path_nibble_len*4)) - 1
+                shifted_mask = mask << (256 - path_nibble_len*4)
+                key_part = key_remainder & shifted_mask
+                assert key_part == path_u256
+                new_depth = last.mpt_lookup_nibble_depth + path_nibble_len
+                # full key may be read if we extend to a branch node that has mixed-length keys,
+                #  one at 0, in the vt slot
+                assert new_depth <= last.mpt_lookup_key_nibbles
+                next.mpt_lookup_nibble_depth = new_depth
+                # the value of the extension will be the next hashed node to expand into
+                next.mpt_current_root = data_li[1]
+                # stay in MPT mode 0, this is a new mpt_current_root to expand
                 return next
-            if first_nibble == 2:  # even length terminating leaf node
-                prefix = encoded_path[1:]
-                assert last.mpt_lookup_depth + len(prefix) * 2 == 32 * 2  # key length needs to match exactly
-                assert prefix == last.mpt_lookup_key[last.mpt_lookup_depth:]  # do we have the right key remainder?
-                next.mpt_current_root = Bytes32()
-                next.mpt_lookup_depth = 0
-                next.mpt_input_rlp = data_li[1]
-                # go to the MPT mode that uses the found value
-                next.mpt_mode = 1
-            if first_nibble == 3:  # odd length terminating leaf node
-                prefix = encoded_path[
-                         1:]  # TODO: this is not right, need to split the nibble, not the byte, but which nibble?
-
-                assert last.mpt_lookup_depth + len(prefix) * 2 - 1 == 32 * 2
-                # TODO: nibble alignment not right
-                assert prefix == last.mpt_lookup_key[last.mpt_lookup_depth:]
-                next.mpt_current_root = Bytes32()
-                next.mpt_lookup_depth = 0
-                next.mpt_input_rlp = data_li[1]
-
-                # go to the MPT mode that uses the found value
-                next.mpt_mode = 1
-            else:
-                raise Exception("invalid MPT node first nibble: %d" % first_nibble)
-
-            # remember the path in case we go back up later
-            next.encoded_path = encoded_path
 
         elif len(data_li) == 17:
-            branch_nodes = data_li[:16]
-            vt = rlp_decode_list(data_li[16])
-            assert len(vt) == 0  # expected NULL for trees with keys of equal length
-            key_nibble = next.mpt_lookup_key[next.mpt_lookup_depth]
-            next.mpt_current_root = branch_nodes[key_nibble]  # TODO: does this need further decoding?
-            next.mpt_lookup_depth += 1
+            branch_nodes = data_li
+            assert len(branch_nodes) == 17
 
-        next.expanded_type = 0  # TODO: branch, extension or leaf
-        next.mpt_input = data
-        next.mpt_mode = 1  # we filled the claim
+            if last.mpt_lookup_nibble_depth == last.mpt_lookup_key_nibbles:
+                # we arrived at the key depth already, there are other nodes with longer keys,
+                # but we only care about the vt node (17th of branch)
+                next.mpt_current_root = branch_nodes[16]
+                # stay in MPT mode 0, this is a new mpt_current_root to expand
+                return next
 
-        # for debugging purposes: ensure we got the correct node from the DB
-        # as a verifier on-chain, it is checked within the get_node function
+            # if taking any other branch node value than the depth of the node itself, we go 1 nibble deeper,
+            # and must not exceed the max depth
+            new_depth = last.mpt_lookup_nibble_depth + 1
+            assert new_depth <= 32
 
-        return next
+            # get the top 4 bits, after the lookup so far
+            branch_lookup_nibble = (last.mpt_lookup_key << (last.mpt_lookup_nibble_depth*4)) >> (256 - 4)
+
+            # new node to expand into
+            next.mpt_current_root = branch_nodes[branch_lookup_nibble]
+            next.mpt_lookup_nibble_depth = new_depth
+            return next
 
     if mpt_mode == 1:  #
         # TODO: check if we're reading or writing

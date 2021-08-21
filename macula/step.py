@@ -212,22 +212,24 @@ class Step(Container):
     #
     mpt_mode: uint8
 
-    # 1 byte for the nibble type byte, 32 for the key,
-    # if it were a single terminating leaf node in the MPT.
-    encoded_path: ByteList[33]
+
+    mpt_path_type_nibble: uint8
+
 
 
 
     # hash of the current node
-    mpt_current_root: Bytes32
-    # key to find in the tree
-    mpt_lookup_key: Bytes32
-    # count in number of nibbles (because tree has branch factor 16), how much of the key has been read
-    mpt_lookup_depth: uint64
+    mpt_current_root: ByteList[32]  # max 32 bytes. Smaller values than 32 are not hashed.
 
-    # The hash of this must match the mpt_current_root in the same step.
-    # The step in expand mode is invalid if it does not match.
-    mpt_input_rlp: ByteList[1024]  # TODO: how large can a single MPT node be?
+    # Note: First nibble of key = most significant nibble of uint256
+    # I.e., to read the next nibble, shift left by 4 bits
+    mpt_lookup_key: uint256
+    # how many nibbles of the key we need to read
+    mpt_lookup_key_nibbles: uint64
+    # how much of the key has been read
+    mpt_lookup_nibble_depth: uint64
+
+    mpt_value: ByteList[2048]
 
     # return false if out of gas
     def use_gas(self, delta: uint64) -> bool:
