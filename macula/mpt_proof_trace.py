@@ -53,6 +53,35 @@ def decode_path(encoded_path: bytes) -> (bool, uint256, int):
     return terminating, path_u256, path_nibble_len
 
 
+def encode_path(path: uint256, path_len: int, terminating: bool) -> bytes:
+    first_byte = 0
+    if path_len % 2 == 1:  # check if odd length
+        first_byte |= (0b0001 << 4) | (int(path) & 0xf)
+        path <<= 4
+        path_len -= 1
+    if terminating:  # check if terminating leaf
+        first_byte |= 0b0010 << 4
+    path = first_byte.to_bytes(length=1, byteorder='big')
+    if path_len == 0:
+        return path
+    remaining_bytes = (int(path) >> (256 - (path_len*4))).to_bytes(length=path_len//2, byteorder='big')
+    return path + remaining_bytes
+
+
+# Takes two paths, and the length of the paths, and outputs the common part and the length of said common part.
+# Lengths are in number of nibbles
+def common_nibble_prefix(a: uint256, b: uint256, a_len: int, b_len: int) -> (uint256, int):
+    prefix = uint256(0)
+    max_common = min(a_len, b_len)
+    for i in range(max_common):
+        a_nib = (a >> (256 - 4)) & 0xF
+        b_nib = (b >> (256 - 4)) & 0xF
+        if a_nib != b_nib:
+            return prefix, i
+        prefix = (prefix >> 4) | (a & (0xF << (256 - 4)))
+    return prefix, max_common
+
+
 def make_reader_step_gen(trie: MPT) -> Processor:
     def reader_step_gen(trac: StepsTrace) -> Step:
         last = trac.last()
@@ -236,30 +265,159 @@ def make_writer_step_gen(trie: MPT) -> Processor:
                     if key_remainder == path_u256:
                         # this is the node we are looking for!
 
-                        # overwrite the old node value, anc compute the root to bubble up the change
+                        # overwrite the old node value, and compute the root to bubble up the change
                         parent_data_li[1] = last.mpt_write_root
                         new_node_raw = rlp_encode_list(parent_data_li)
                         new_key = mpt_hash(new_node_raw)
                         next.mpt_write_root = new_key
 
                         # keep the trie storage up to date with out changes
-                        trie.put_node(new_key, new_node_raw)
+                        trie.put_node(new_node_raw)
 
                         # stay in MPT mode 0, this is a new mpt_write_root to bubble up
                         return next
                     else:
                         # this is just a sibling node with equal key length and common prefix
-                        # TODO: create extension + branch node with single sibling + leaf x 2
+                        remainder_nibble_len = parent.mpt_lookup_key_nibbles - parent.mpt_lookup_nibble_depth
+                        assert remainder_nibble_len == path_nibble_len  # sanity check
+
+                        prefix_path, prefix_len = common_nibble_prefix(
+                            key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
+
+                        leaf_sibling = parent_data_li[1]
+                        leaf_new = last.mpt_write_root
+
+                        # if the values do not differ only in the last nibble, they need their own node
+                        if prefix_len + 1 < path_nibble_len:
+                            remaining_len = path_nibble_len - prefix_len - 1
+                            leaf_sibling_path = encode_path(path_u256 << ((prefix_len+1)*4), remaining_len, True)
+                            leaf_new_path = encode_path(key_remainder << ((prefix_len+1)*4), remaining_len, True)
+
+                            leaf_sibling_node = [leaf_sibling_path, leaf_sibling]
+                            leaf_new_node = [leaf_new_path, leaf_new]
+
+                            leaf_sibling_raw = rlp_encode_list(leaf_sibling_node)
+                            trie.put_node(leaf_sibling_raw)
+                            leaf_sibling = mpt_hash(leaf_sibling_raw)
+
+                            leaf_new_raw = rlp_encode_list(leaf_new_node)
+                            trie.put_node(leaf_new_raw)
+                            leaf_new = mpt_hash(leaf_new_raw)
+
+                        # now split by putting them in a branch
+                        branch_node = [b""] * 17
+                        branch_node[(path_u256 << (prefix_len*4)) & (0xF << (256-4))] = leaf_sibling
+                        branch_node[(key_remainder << (prefix_len*4)) & (0xF << (256-4))] = leaf_new
+
+                        branch_raw = rlp_encode_list(branch_node)
+                        trie.put_node(branch_raw)
+                        branch_root = mpt_hash(branch_raw)
+
+                        # and if they had a common prefix, they need to get extended to
+                        if prefix_len > 0:
+                            extension_path = encode_path(prefix_path, prefix_len, False)
+                            extension_node = [extension_path, branch_root]
+
+                            extension_raw = rlp_encode_list(extension_node)
+                            trie.put_node(extension_raw)
+                            extension_root = mpt_hash(extension_raw)
+                            next.mpt_write_root = extension_root
+                        else:
+                            next.mpt_write_root = branch_root
+
                         return next
                 elif new_depth < parent.mpt_lookup_key_nibbles:
                     # the node we are looking for does not exist,
                     # but another leaf exists with a shorter key that is a prefix of our key
-                    # TODO: create extension + branch node with vt + leaf
+
+                    remainder_nibble_len = parent.mpt_lookup_key_nibbles - parent.mpt_lookup_nibble_depth
+                    assert path_nibble_len < remainder_nibble_len  # sanity check
+
+                    prefix_path, prefix_len = common_nibble_prefix(
+                        key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
+
+                    leaf_sibling = parent_data_li[1]
+                    leaf_new = last.mpt_write_root
+                    
+                    # if there's more than 1 nibble difference,
+                    # our value needs a leaf node and can't just go into the branch slot
+                    if path_nibble_len + 1 < remainder_nibble_len:
+                        remaining_len = remainder_nibble_len - prefix_len - 1
+                        leaf_new_path = encode_path(key_remainder << ((prefix_len+1)*4), remaining_len, True)
+                        leaf_new_node = [leaf_new_path, leaf_new]
+
+                        leaf_new_raw = rlp_encode_list(leaf_new_node)
+                        trie.put_node(leaf_new_raw)
+                        leaf_new = mpt_hash(leaf_new_raw)
+                    
+                    # now split by putting them in a branch
+                    branch_node = [b""] * 17
+                    branch_node[16] = leaf_sibling
+                    branch_node[(key_remainder << (prefix_len*4)) & (0xF << (256-4))] = leaf_new
+
+                    branch_raw = rlp_encode_list(branch_node)
+                    trie.put_node(branch_raw)
+                    branch_root = mpt_hash(branch_raw)
+
+                    # and if they had a common prefix, they need to get extended to
+                    if prefix_len > 0:
+                        extension_path = encode_path(prefix_path, prefix_len, False)
+                        extension_node = [extension_path, branch_root]
+
+                        extension_raw = rlp_encode_list(extension_node)
+                        trie.put_node(extension_raw)
+                        extension_root = mpt_hash(extension_raw)
+                        next.mpt_write_root = extension_root
+                    else:
+                        next.mpt_write_root = branch_root
+
                     return next
+
                 elif new_depth > parent.mpt_lookup_key_nibbles:
                     # the node we are looking for does not exist,
                     # but another leaf exists with a longer key of which our key is a prefix
-                    # TODO: create extension + branch node with vt + leaf
+
+                    remainder_nibble_len = parent.mpt_lookup_key_nibbles - parent.mpt_lookup_nibble_depth
+                    assert path_nibble_len > remainder_nibble_len  # sanity check
+
+                    prefix_path, prefix_len = common_nibble_prefix(
+                        key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
+
+                    leaf_sibling = parent_data_li[1]
+                    leaf_new = last.mpt_write_root
+
+                    # if there's more than 1 nibble difference,
+                    # the other needs a leaf node and can't just go into the branch slot
+                    if path_nibble_len > remainder_nibble_len + 1:
+                        remaining_len = path_nibble_len - prefix_len - 1
+                        leaf_sibling_path = encode_path(path_u256 << ((prefix_len+1)*4), remaining_len, True)
+                        leaf_sibling_node = [leaf_sibling_path, leaf_sibling]
+
+                        leaf_sibling_raw = rlp_encode_list(leaf_sibling_node)
+                        trie.put_node(leaf_sibling_raw)
+                        leaf_sibling = mpt_hash(leaf_sibling_raw)
+
+                    # now split by putting them in a branch
+                    branch_node = [b""] * 17
+                    branch_node[(path_u256 << (prefix_len*4)) & (0xF << (256-4))] = leaf_sibling
+                    branch_node[16] = leaf_new
+
+                    branch_raw = rlp_encode_list(branch_node)
+                    trie.put_node(branch_raw)
+                    branch_root = mpt_hash(branch_raw)
+
+                    # and if they had a common prefix, they need to get extended to
+                    if prefix_len > 0:
+                        extension_path = encode_path(prefix_path, prefix_len, False)
+                        extension_node = [extension_path, branch_root]
+
+                        extension_raw = rlp_encode_list(extension_node)
+                        trie.put_node(extension_raw)
+                        extension_root = mpt_hash(extension_raw)
+                        next.mpt_write_root = extension_root
+                    else:
+                        next.mpt_write_root = branch_root
+
                     return next
 
             else:  # handle extension
