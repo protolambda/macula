@@ -1,5 +1,5 @@
 from remerkleable.complex import Container, Vector, List
-from remerkleable.byte_arrays import Bytes32, ByteVector
+from remerkleable.byte_arrays import Bytes32, ByteVector, ByteList
 from remerkleable.basic import uint8, uint64, uint256, boolean
 from .opcodes import OpCode
 
@@ -22,6 +22,15 @@ class Memory(List[uint8, 64 << 20]):
             self.append(0)
 
 
+def uint256_to_b32(v: uint256) -> Bytes32:
+    # encode_bytes returns little-endian, we want big-endian
+    return endian_swap_b32(v.encode_bytes())
+
+
+def b32_to_uint256(v: Bytes32) -> uint256:
+    return uint256.decode_bytes(endian_swap_b32(v))
+
+
 def endian_swap_b32(v: Bytes32) -> Bytes32:
     return Bytes32(v[::-1])
 
@@ -33,7 +42,7 @@ class Stack(List[Bytes32, 1024]):
         self.append(b)
 
     def push_u256(self, b: uint256) -> None:  # TODO: hacky, SSZ uses little-endian, EVM uses big-endian
-        self.append(endian_swap_b32(b.encode_bytes()))
+        self.append(uint256_to_b32(b))
 
     def pop_b32(self) -> Bytes32:
         v = self[len(self)-1]
@@ -41,7 +50,7 @@ class Stack(List[Bytes32, 1024]):
         return v
 
     def pop_u256(self) -> uint256:
-        v = uint256.decode_bytes(endian_swap_b32(self[len(self)-1]))
+        v = b32_to_uint256(self[len(self)-1])
         self.pop()
         return v
 
@@ -59,20 +68,21 @@ class Stack(List[Bytes32, 1024]):
         return self[len(self)-1]
 
     def peek_u256(self) -> uint256:
-        return uint256.decode_bytes(endian_swap_b32(self[len(self)-1]))
+        return b32_to_uint256(self[len(self)-1])
 
     # like peek, but write instead of read, to avoid pop/push overhead
     def tweak_b32(self, v: Bytes32):
         self[len(self)-1] = v
 
     def tweak_u256(self, v: uint256):
-        self[len(self)-1] = endian_swap_b32(v.encode_bytes())
+        self[len(self)-1] = uint256_to_b32(v)
 
     def back_b32(self, n: int) -> Bytes32:
         length = len(self)
         if n+1 > length:
             raise Exception("bad stack access, interpreter bug")
         return self[length - n - 1]
+
 
 # Needs to be as big as memory, all of it can be returned
 class ReturnData(List[uint8, 64 << 20]):
@@ -131,10 +141,12 @@ class Step(Container):
     state_root: Bytes32
     # Main mode of operation, to find the right kind of step execution at any given point
     exec_mode: uint8
+
     # History scope
     # ------------------
     # Most recent 256 blocks (excluding the block itself)
     block_hashes: BlockHistory
+
     # Block scope
     # ------------------
     # TODO: origin balance check for fee payment and value transfer
@@ -171,6 +183,7 @@ class Step(Container):
     value: uint256
     # Make storage read-only, to support STATIC-CALL
     read_only: boolean
+
     # Execution scope
     # ------------------
     # We generalize the opcode read from the code at PC,
@@ -181,14 +194,40 @@ class Step(Container):
     pc: uint64
     # when splitting up operations further
     sub_index: uint64
-    # true when the sub-operation is ongoing and must be completed still.
-    sub_remaining: boolean
     # sub-computations need a place to track their inner state
     sub_data: SubData
     # When doing a return, continue with the operations after this step.
     return_to_step: uint64
-    # Depending on the unwind mode: continue/return/out-of-gas/etc.
-    unwind: uint64
+
+    # StateDB scope
+    # ------------------
+
+    # MPT scope
+    # ------------------
+    # On a read: recurse from top to bottom, then store bottom node
+    # On a write: recurse from top to bottom, then unwind back
+
+    # 0 = reading_claim
+    # 1 = reading_proof
+    #
+    mpt_mode: uint8
+
+    # 1 byte for the nibble type byte, 32 for the key,
+    # if it were a single terminating leaf node in the MPT.
+    encoded_path: ByteList[33]
+
+
+
+    # hash of the current node
+    mpt_current_root: Bytes32
+    # key to find in the tree
+    mpt_lookup_key: Bytes32
+    # count in number of nibbles (because tree has branch factor 16), how much of the key has been read
+    mpt_lookup_depth: uint64
+
+    # The hash of this must match the mpt_current_root in the same step.
+    # The step in expand mode is invalid if it does not match.
+    mpt_input_rlp: ByteList[1024]  # TODO: how large can a single MPT node be?
 
     # return false if out of gas
     def use_gas(self, delta: uint64) -> bool:
