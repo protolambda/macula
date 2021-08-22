@@ -1,5 +1,12 @@
 from .trace import StepsTrace, Processor, MPT
 from .step import *
+from enum import Enum
+
+
+class MPTAccessMode(Enum):
+    READING = 0
+    WRITING = 1
+    DELETING = 2  # TODO
 
 
 def rlp_decode_list(data: bytes) -> list:
@@ -80,13 +87,6 @@ def common_nibble_prefix(a: uint256, b: uint256, a_len: int, b_len: int) -> (uin
             return prefix, i
         prefix = (prefix >> 4) | (a & (0xF << (256 - 4)))
     return prefix, max_common
-
-
-from enum import Enum
-class MPTAccessMode(Enum):
-    READING = 0
-    WRITING = 1
-    DELETING = 2  # TODO
 
 
 def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
@@ -455,18 +455,6 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
     return reader_step_gen
 
 
-def write_start_step(trac: StepsTrace) -> Step:
-    last = trac.last()
-    next = last.copy()
-    if len(last.mpt_value) >= 32:
-        next.mpt_current_root = mpt_hash(last.mpt_value)
-    else:
-        next.mpt_current_root = last.mpt_value
-    next.mpt_mode = 3  # continue to writing
-    return next
-
-
-
 # TODO: init claim with mpt_current_root set to state-root (or account storage root)
 def next_mpt_step(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -488,24 +476,29 @@ def next_mpt_step(trac: StepsTrace) -> Step:
         return next
 
     if mpt_mode == 1:  # reading
-        proc = make_reader_step_gen(trie)
+        proc = make_reader_step_gen(trie, MPTAccessMode.READING)
         return proc(trac)
 
     if mpt_mode == 2:  # writing start (value to be mapped to node root)
-        return write_start_step(trac)
+        next = last.copy()
+        if len(last.mpt_value) >= 32:
+            next.mpt_write_root = mpt_hash(last.mpt_value)
+        else:
+            next.mpt_write_root = last.mpt_value
+        next.mpt_mode = 1  # continue to write-preparation reading
+        next.mpt_mode_on_finish = 3  # return to writer value injection
+        return next
 
-    if mpt_mode == 3:  # writing
+    if mpt_mode == 3:  # once done with reading, the mpt_write_root is injected to do the write.
+        next = last.copy()
+        next.mpt_current_root = last.mpt_write_root
+        next.mpt_mode = 4  # continue to writing
+        next.mpt_mode_on_finish = 0  # once done bubbling up, return
+        return next
 
+    if mpt_mode == 4:  # actual writing bubble-up process
+        proc = make_reader_step_gen(trie, MPTAccessMode.WRITING)
+        return proc(trac)
 
+    raise Exception("unexpected MPT mode: %d" % mpt_mode)
 
-        # TODO: check if we're reading or writing
-        # If reading only, return the decoded last.mpt_input_rlp
-        # If writing, then based on traversal of a write-key, modify the nodes we just passed by,
-        #  from bottom to top, to construct a new state root.
-        # 1. modify RLP
-        # 2. in step loop:
-        #   2.1 fetch RLP from layer higher that we just read top-down
-        #   2.2 split extension node, or overwrite slot in branch-node, to insert the key
-        #   2.3 compute mpt_hash to use for next higher layer
-        # 3. continue until at top, then have the resulting state-root (or root of storage in account)
-        raise NotImplementedError

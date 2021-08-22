@@ -209,6 +209,8 @@ class Step(Container):
 
     # Instructs how to execute
     mpt_mode: uint8
+    # what to write at the mpt_lookup_key, if in writing mode
+    mpt_write_root: ByteList[32]
     # after finishing the mode, continue with this next mode.
     mpt_mode_on_finish: uint8
 
