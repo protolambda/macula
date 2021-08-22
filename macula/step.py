@@ -215,7 +215,7 @@ class Step(Container):
     # the step index that has step.mpt_value that represents the parent of the current node
     mpt_parent_node_step: uint64
 
-    # hash of the current node
+    # hash of the current node (to expand or to bubble up)
     mpt_current_root: ByteList[32]  # max 32 bytes. Smaller values than 32 are not hashed.
     # if the node corresponding to the key cannot be found
     # traversal stops with this failure marker. Non-zero if failure.
@@ -231,7 +231,6 @@ class Step(Container):
 
     mpt_value: ByteList[2048]
 
-    mpt_write_root: ByteList[32]
 
     # return false if out of gas
     def use_gas(self, delta: uint64) -> bool:

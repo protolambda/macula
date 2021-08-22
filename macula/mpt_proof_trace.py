@@ -82,129 +82,368 @@ def common_nibble_prefix(a: uint256, b: uint256, a_len: int, b_len: int) -> (uin
     return prefix, max_common
 
 
-def make_reader_step_gen(trie: MPT) -> Processor:
+from enum import Enum
+class MPTAccessMode(Enum):
+    READING = 0
+    WRITING = 1
+    DELETING = 2  # TODO
+
+
+def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
     def reader_step_gen(trac: StepsTrace) -> Step:
         last = trac.last()
-        next = last.copy()
 
-        # index of last step becomes the parent of the next step
-        next.mpt_parent_node_step = trac.length() - 1
+        # Magic:
+        #  - when reading, we take the last step node and traverse deeper with the next step.
+        #  - when writing, we take lookup step that created the current step,
+        #     and produce a step that bubbles-up changes from the last step.
+        #    I.e. writing first does a read from top-to-bottom to learn to trust whatever nodes it's modifying,
+        #    then modifies/splits whatever necessary as it bubbles up the change by unwinding.
 
-        if last.mpt_lookup_key_nibbles == last.mpt_lookup_nibble_depth:  # have we arrived yet?
-            if len(last.mpt_current_root) < 32:
-                value = last.mpt_current_root
-            else:
-                value = trie.get_node(last.mpt_current_root)
-                assert mpt_hash(value) == next.mpt_current_root
+        if access == MPTAccessMode.READING:
+            content = last
+            next = content.copy()
 
-            if value == b"":
-                # if we got a branch at the very last key depth,
-                # then we may end with an empty node at branch slot,
-                # this is not technically an error w.r.t. MPT, but shouldn't pass as OK.
-                next.mpt_fail_lookup = 10
+            # index of last step becomes the parent of the next step
+            next.mpt_parent_node_step = trac.length() - 1
 
-            next.mpt_value = value
-            next.mpt_mode = last.mpt_mode_on_finish
-            return next
+            if content.mpt_lookup_key_nibbles == content.mpt_lookup_nibble_depth:  # have we arrived yet?
+                if len(content.mpt_current_root) < 32:
+                    value = content.mpt_current_root
+                else:
+                    value = trie.get_node(content.mpt_current_root)
+                    assert mpt_hash(value) == next.mpt_current_root
+
+                if value == b"":
+                    # if we got a branch at the very last key depth,
+                    # then we may end with an empty node at branch slot,
+                    # this is not technically an error w.r.t. MPT, but shouldn't pass as OK.
+                    next.mpt_fail_lookup = 10
+
+                next.mpt_value = value
+                next.mpt_mode = content.mpt_mode_on_finish
+                return next
+
+        elif access == MPTAccessMode.WRITING:
+            # have we bubbled up to the top yet?
+            if last.mpt_lookup_nibble_depth == 0:
+                next = last.copy()
+                next.mpt_mode = last.mpt_mode_on_finish
+                return next
+
+            # We follow the same logic-flow as if we were at this step,
+            # but instead of going deeper by digging into the node provided by the content,
+            # we modify a copy of that node and bubble up the change.
+            #
+            # we're unwinding back to parent nodes, not on last node.
+            content = trac.by_index(last.mpt_parent_node_step)
+            next = content.copy()
+        else:
+            raise NotImplementedError
 
         # If not arrived yet, then expand it
-        data = trie.get_node(last.mpt_current_root)
+        data = trie.get_node(content.mpt_current_root)
         # check that the provided MPT node witness data matches the request node root
-        assert mpt_hash(data) == next.mpt_current_root
+        assert mpt_hash(data) == content.mpt_current_root
 
         data_li = rlp_decode_list(data)
         if len(data_li) == 0:
-            next.mpt_current_root = Bytes32()
-            # stop recursing deeper, null value. (e.g. due to empty branch slot in parent node on our path)
-            next.mpt_value = b""
-            next.mpt_fail_lookup = 1
-            next.mpt_mode = last.mpt_mode_on_finish
-            return next
+            if access == MPTAccessMode.READING:
+                next.mpt_current_root = Bytes32()
+                # stop recursing deeper, null value. (e.g. due to empty branch slot in parent node on our path)
+                next.mpt_value = b""
+                next.mpt_fail_lookup = 1
+                next.mpt_mode = content.mpt_mode_on_finish
+                return next
+            elif access == MPTAccessMode.WRITING:
+                # Empty value means we can skip to the next parent, the key didn't exist, or the value is empty.
+                # regardless, it will have to be overwritten by modifying the parent.
+
+                # TODO: create leaf node if lookup is deeper
+
+                next.mpt_current_root = last.mpt_current_root
+                return next
+            else:
+                raise NotImplementedError
 
         elif len(data_li) == 2:
             encoded_path = data_li[0]  # path is the first value of the tuple, regardless of extension/leaf type choice
             assert len(encoded_path) >= 1
             terminating, path_u256, path_nibble_len = decode_path(encoded_path)
 
-            key_remainder = last.mpt_lookup_key << (last.mpt_lookup_nibble_depth*4)
-            new_depth = last.mpt_lookup_nibble_depth + path_nibble_len
+            key_remainder = content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)
+            new_depth = content.mpt_lookup_nibble_depth + path_nibble_len
 
             # check we have read the full key, not more and not less
-            if new_depth == last.mpt_lookup_key_nibbles:
+            if new_depth == content.mpt_lookup_key_nibbles:
                 # this is a key of equal length, but might not yet be it
                 if key_remainder == path_u256:
                     # this is at or next to the node we are looking for!
 
-                    # it's a leaf, but we'll expand
-                    # leaf expand in case it was hashed (>= 32 bytes)
-                    # extensions always extend (key can match and point to a branch node that holds the value)
-                    next.mpt_current_root = data_li[1]
-                    next.mpt_lookup_nibble_depth = new_depth
-                    # stay in the same MPT mode, this is a new mpt_current_root to expand
-                    return next
-                else:
-                    # this is just a sibling node with equal key length and common prefix
-                    next.mpt_fail_lookup = 2
-                    next.mpt_mode = last.mpt_mode_on_finish
-                    return next
-            elif new_depth < last.mpt_lookup_key_nibbles:
-                if terminating:
-                    # the node we are looking for does not exist,
-                    # but another leaf exists with a shorter key that is a prefix of our key
-                    next.mpt_fail_lookup = 3
-                    next.mpt_mode = last.mpt_mode_on_finish
-                    return next
-                else:
-                    # extension size is on-track, check if it matches
-                    key_remainder = last.mpt_lookup_key << (last.mpt_lookup_nibble_depth*4)
-                    # mask out the part of the key that should match this entry
-                    mask = (uint256(1) << (path_nibble_len*4)) - 1
-                    shifted_mask = mask << (256 - path_nibble_len*4)
-                    key_part = key_remainder & shifted_mask
-
-                    if key_part != path_u256:
-                        # extension leads to some other key, not what we are looking for
-                        next.mpt_fail_lookup = 6
-                        next.mpt_mode = last.mpt_mode_on_finish
-                        return next
-                    else:
-                        # extension matches, it's on our path, we can find the node!
-
-                        # the value of the extension will be the next hashed node to expand into
+                    if access == MPTAccessMode.READING:
+                        # it's a leaf, but we'll expand
+                        # leaf expand in case it was hashed (>= 32 bytes)
+                        # extensions always extend (key can match and point to a branch node that holds the value)
                         next.mpt_current_root = data_li[1]
-
                         next.mpt_lookup_nibble_depth = new_depth
                         # stay in the same MPT mode, this is a new mpt_current_root to expand
                         return next
-            elif new_depth > last.mpt_lookup_key_nibbles:
+                    elif access == MPTAccessMode.WRITING:
+                        # overwrite the old node value, and compute the root to bubble up the change
+                        data_li[1] = last.mpt_current_root
+                        new_node_raw = rlp_encode_list(data_li)
+                        new_key = mpt_hash(new_node_raw)
+                        next.mpt_current_root = new_key
+
+                        # keep the trie storage up to date with out changes
+                        trie.put_node(new_node_raw)
+
+                        # stay in the same MPT mode, this is a new mpt_current_root to bubble up
+                        return next
+                    else:
+                        raise NotImplementedError
+                else:
+                    # this is just a sibling node with equal key length and common prefix
+
+                    if access == MPTAccessMode.READING:
+                        next.mpt_fail_lookup = 2
+                        next.mpt_mode = content.mpt_mode_on_finish
+                        return next
+                    elif access == MPTAccessMode.WRITING:
+
+                        remainder_nibble_len = content.mpt_lookup_key_nibbles - content.mpt_lookup_nibble_depth
+                        assert remainder_nibble_len == path_nibble_len  # sanity check
+
+                        prefix_path, prefix_len = common_nibble_prefix(
+                            key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
+
+                        leaf_sibling = data_li[1]
+                        leaf_new = last.mpt_current_root
+
+                        # if the values do not differ only in the last nibble, they need their own node
+                        if prefix_len + 1 < path_nibble_len:
+                            remaining_len = path_nibble_len - prefix_len - 1
+                            leaf_sibling_path = encode_path(path_u256 << ((prefix_len+1)*4), remaining_len, True)
+                            leaf_new_path = encode_path(key_remainder << ((prefix_len+1)*4), remaining_len, True)
+
+                            leaf_sibling_node = [leaf_sibling_path, leaf_sibling]
+                            leaf_new_node = [leaf_new_path, leaf_new]
+
+                            leaf_sibling_raw = rlp_encode_list(leaf_sibling_node)
+                            trie.put_node(leaf_sibling_raw)
+                            leaf_sibling = mpt_hash(leaf_sibling_raw)
+
+                            leaf_new_raw = rlp_encode_list(leaf_new_node)
+                            trie.put_node(leaf_new_raw)
+                            leaf_new = mpt_hash(leaf_new_raw)
+
+                        # now split by putting them in a branch
+                        branch_node = [b""] * 17
+                        branch_node[(path_u256 << (prefix_len*4)) & (0xF << (256-4))] = leaf_sibling
+                        branch_node[(key_remainder << (prefix_len*4)) & (0xF << (256-4))] = leaf_new
+
+                        branch_raw = rlp_encode_list(branch_node)
+                        trie.put_node(branch_raw)
+                        branch_root = mpt_hash(branch_raw)
+
+                        # and if they had a common prefix, they need to get extended to
+                        if prefix_len > 0:
+                            extension_path = encode_path(prefix_path, prefix_len, False)
+                            extension_node = [extension_path, branch_root]
+
+                            extension_raw = rlp_encode_list(extension_node)
+                            trie.put_node(extension_raw)
+                            extension_root = mpt_hash(extension_raw)
+                            next.mpt_current_root = extension_root
+                        else:
+                            next.mpt_current_root = branch_root
+
+                        return next
+                    else:
+                        raise NotImplementedError
+            elif new_depth < content.mpt_lookup_key_nibbles:
+                # the node we are looking for does not exist,
+                # but another leaf exists with a shorter key that is a prefix of our key
+
+                if access == MPTAccessMode.READING:
+                    if terminating:
+                        next.mpt_fail_lookup = 3
+                        next.mpt_mode = content.mpt_mode_on_finish
+                        return next
+                    else:
+                        # extension size is on-track, check if it matches
+                        key_remainder = content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)
+                        # mask out the part of the key that should match this entry
+                        mask = (uint256(1) << (path_nibble_len*4)) - 1
+                        shifted_mask = mask << (256 - path_nibble_len*4)
+                        key_part = key_remainder & shifted_mask
+
+                        if key_part != path_u256:
+                            # extension leads to some other key, not what we are looking for
+                            next.mpt_fail_lookup = 6
+                            next.mpt_mode = content.mpt_mode_on_finish
+                            return next
+                        else:
+                            # extension matches, it's on our path, we can find the node!
+
+                            # the value of the extension will be the next hashed node to expand into
+                            next.mpt_current_root = data_li[1]
+
+                            next.mpt_lookup_nibble_depth = new_depth
+                            # stay in the same MPT mode, this is a new mpt_current_root to expand
+                            return next
+                elif access == MPTAccessMode.WRITING:
+                    remainder_nibble_len = content.mpt_lookup_key_nibbles - content.mpt_lookup_nibble_depth
+                    assert path_nibble_len < remainder_nibble_len  # sanity check
+
+                    prefix_path, prefix_len = common_nibble_prefix(
+                        key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
+
+                    target_sibling = data_li[1]
+                    target_new = last.mpt_current_root
+
+                    # if there's more than 1 nibble difference,
+                    # our value needs a leaf/extension node and can't just go into the branch slot
+                    if path_nibble_len + 1 < remainder_nibble_len:
+                        remaining_len = remainder_nibble_len - prefix_len - 1
+                        target_new_path = encode_path(key_remainder << ((prefix_len+1)*4), remaining_len, terminating)
+                        target_new_node = [target_new_path, target_new]
+
+                        target_new_raw = rlp_encode_list(target_new_node)
+                        trie.put_node(target_new_raw)
+                        target_new = mpt_hash(target_new_raw)
+
+                    # now split by putting them in a branch
+                    branch_node = [b""] * 17
+                    branch_node[16] = target_sibling
+                    branch_node[(key_remainder << (prefix_len*4)) & (0xF << (256-4))] = target_new
+
+                    branch_raw = rlp_encode_list(branch_node)
+                    trie.put_node(branch_raw)
+                    branch_root = mpt_hash(branch_raw)
+
+                    # and if they had a common prefix, they need to get extended to
+                    if prefix_len > 0:
+                        extension_path = encode_path(prefix_path, prefix_len, False)
+                        extension_node = [extension_path, branch_root]
+
+                        extension_raw = rlp_encode_list(extension_node)
+                        trie.put_node(extension_raw)
+                        extension_root = mpt_hash(extension_raw)
+                        next.mpt_current_root = extension_root
+                    else:
+                        next.mpt_current_root = branch_root
+
+                    return next
+                else:
+                    raise NotImplementedError
+
+            elif new_depth > content.mpt_lookup_key_nibbles:
                 # the node we are looking for does not exist,
                 # but another leaf/extension exists with a longer key of which our key is a prefix
-                next.mpt_fail_lookup = 4
-                next.mpt_mode = last.mpt_mode_on_finish
-                return next
 
+                if access == MPTAccessMode.READING:
+                    next.mpt_fail_lookup = 4
+                    next.mpt_mode = content.mpt_mode_on_finish
+                    return next
+                elif access == MPTAccessMode.WRITING:
+                    remainder_nibble_len = content.mpt_lookup_key_nibbles - content.mpt_lookup_nibble_depth
+                    assert path_nibble_len > remainder_nibble_len  # sanity check
+
+                    prefix_path, prefix_len = common_nibble_prefix(
+                        key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
+
+                    target_sibling = data_li[1]
+                    target_new = last.mpt_current_root
+
+                    # if there's more than 1 nibble difference,
+                    # the other needs a leaf/extension node and can't just go into the branch slot
+                    if path_nibble_len > remainder_nibble_len + 1:
+                        remaining_len = path_nibble_len - prefix_len - 1
+                        target_sibling_path = encode_path(path_u256 << ((prefix_len+1)*4), remaining_len, terminating)
+                        target_sibling_node = [target_sibling_path, target_sibling]
+
+                        target_sibling_raw = rlp_encode_list(target_sibling_node)
+                        trie.put_node(target_sibling_raw)
+                        target_sibling = mpt_hash(target_sibling_raw)
+
+                    # now split by putting them in a branch
+                    branch_node = [b""] * 17
+                    branch_node[(path_u256 << (prefix_len*4)) & (0xF << (256-4))] = target_sibling
+                    branch_node[16] = target_new
+
+                    branch_raw = rlp_encode_list(branch_node)
+                    trie.put_node(branch_raw)
+                    branch_root = mpt_hash(branch_raw)
+
+                    # and if they had a common prefix, they need to get extended to
+                    if prefix_len > 0:
+                        extension_path = encode_path(prefix_path, prefix_len, False)
+                        extension_node = [extension_path, branch_root]
+
+                        extension_raw = rlp_encode_list(extension_node)
+                        trie.put_node(extension_raw)
+                        extension_root = mpt_hash(extension_raw)
+                        next.mpt_current_root = extension_root
+                    else:
+                        next.mpt_current_root = branch_root
+
+                    return next
+
+                else:
+                    raise NotImplementedError
         elif len(data_li) == 17:
 
-            if last.mpt_lookup_nibble_depth == last.mpt_lookup_key_nibbles:
+            if content.mpt_lookup_nibble_depth == content.mpt_lookup_key_nibbles:
                 # we arrived at the key depth already, there are other nodes with longer keys,
                 # but we only care about the vt node (17th of branch)
-                next.mpt_current_root = data_li[16]
-                # stay in the same MPT mode, this is a new mpt_current_root to expand
-                return next
+
+                if access == MPTAccessMode.READING:
+                    next.mpt_current_root = data_li[16]
+                    # stay in the same MPT mode, this is a new mpt_current_root to expand
+                    return next
+                elif access == MPTAccessMode.WRITING:
+                    # we arrived at the key depth already, there are other nodes with longer keys,
+                    # but we only care about the vt node (17th of branch)
+                    data_li[16] = last.mpt_current_root
+
+                    branch_raw = rlp_encode_list(data_li)
+                    trie.put_node(branch_raw)
+                    branch_root = mpt_hash(branch_raw)
+                    next.mpt_current_root = branch_root
+
+                    # stay in the same MPT mode, this is a new mpt_current_root to bubble up
+                    return next
+                else:
+                    raise NotImplementedError
 
             # if taking any other branch node value than the depth of the node itself, we go 1 nibble deeper,
             # and must not exceed the max depth (all keys are 32 bytes or less,
             # e.g. RLP-encoded receipt-trie indices as key)
-            new_depth = last.mpt_lookup_nibble_depth + 1
+            new_depth = content.mpt_lookup_nibble_depth + 1
             assert new_depth <= 32
 
             # get the top 4 bits, after the lookup so far
-            branch_lookup_nibble = (last.mpt_lookup_key << (last.mpt_lookup_nibble_depth*4)) >> (256 - 4)
+            branch_lookup_nibble = (content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)) >> (256 - 4)
 
-            # new node to expand into
-            next.mpt_current_root = data_li[branch_lookup_nibble]
-            next.mpt_lookup_nibble_depth = new_depth
-            return next
+            if access == MPTAccessMode.READING:
+                # new node to expand into
+                next.mpt_current_root = data_li[branch_lookup_nibble]
+                next.mpt_lookup_nibble_depth = new_depth
+                return next
+            elif access == MPTAccessMode.WRITING:
+                # new node to bubble up into
+                data_li[branch_lookup_nibble] = last.mpt_current_root
+
+                branch_raw = rlp_encode_list(parent_data_li)
+                trie.put_node(branch_raw)
+                branch_root = mpt_hash(branch_raw)
+                next.mpt_current_root = branch_root
+
+                # stay in the same MPT mode, this is a new mpt_current_root to bubble up
+                return next
+            else:
+                raise NotImplementedError
 
     return reader_step_gen
 
@@ -224,32 +463,18 @@ def make_writer_step_gen(trie: MPT) -> Processor:
     def write_step(trac: StepsTrace) -> Step:
         last = trac.last()
 
-        # have we bubbled up to the top yet?
-        if last.mpt_lookup_nibble_depth == 0:
-            next = last.copy()
-            next.mpt_mode = last.mpt_mode_on_finish
-            return next
 
-        parent = trac.by_index(last.mpt_parent_node_step)
-        # we're unwinding back to parent nodes, not on last node.
-        next = parent.copy()
 
-        # do the reverse as in the read-steps,
-        #  but update the node before traversing back up to the root of the trie.
+
+
 
         parent_data = trie.get_node(parent.mpt_current_root)
         # check that the provided MPT node witness data matches the request node root
         assert mpt_hash(parent_data) == parent.mpt_current_root
 
         parent_data_li = rlp_decode_list(parent_data)
-        if len(parent_data_li) != 0:
-            # Empty value means we can skip to the next parent, the key didn't exist, or the value is empty.
-            # regardless, it will have to be overwritten by modifying the parent.
-
-            # TODO: create leaf node if lookup is deeper
-
-            next.mpt_write_root = last.mpt_write_root
-            return next
+        if len(parent_data_li) == 0:
+            ...
 
         elif len(parent_data_li) == 2:
             encoded_path = parent_data_li[0]  # path is the first value of the tuple, regardless of extension/leaf type choice
@@ -265,176 +490,25 @@ def make_writer_step_gen(trie: MPT) -> Processor:
                 if key_remainder == path_u256:
                     # this is at or next to the node we are looking for!
 
-                    # overwrite the old node value, and compute the root to bubble up the change
-                    parent_data_li[1] = last.mpt_write_root
-                    new_node_raw = rlp_encode_list(parent_data_li)
-                    new_key = mpt_hash(new_node_raw)
-                    next.mpt_write_root = new_key
-
-                    # keep the trie storage up to date with out changes
-                    trie.put_node(new_node_raw)
-
-                    # stay in the same MPT mode, this is a new mpt_write_root to bubble up
-                    return next
                 else:
                     # this is just a sibling node with equal key length and common prefix
 
-                    remainder_nibble_len = parent.mpt_lookup_key_nibbles - parent.mpt_lookup_nibble_depth
-                    assert remainder_nibble_len == path_nibble_len  # sanity check
-
-                    prefix_path, prefix_len = common_nibble_prefix(
-                        key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
-
-                    leaf_sibling = parent_data_li[1]
-                    leaf_new = last.mpt_write_root
-
-                    # if the values do not differ only in the last nibble, they need their own node
-                    if prefix_len + 1 < path_nibble_len:
-                        remaining_len = path_nibble_len - prefix_len - 1
-                        leaf_sibling_path = encode_path(path_u256 << ((prefix_len+1)*4), remaining_len, True)
-                        leaf_new_path = encode_path(key_remainder << ((prefix_len+1)*4), remaining_len, True)
-
-                        leaf_sibling_node = [leaf_sibling_path, leaf_sibling]
-                        leaf_new_node = [leaf_new_path, leaf_new]
-
-                        leaf_sibling_raw = rlp_encode_list(leaf_sibling_node)
-                        trie.put_node(leaf_sibling_raw)
-                        leaf_sibling = mpt_hash(leaf_sibling_raw)
-
-                        leaf_new_raw = rlp_encode_list(leaf_new_node)
-                        trie.put_node(leaf_new_raw)
-                        leaf_new = mpt_hash(leaf_new_raw)
-
-                    # now split by putting them in a branch
-                    branch_node = [b""] * 17
-                    branch_node[(path_u256 << (prefix_len*4)) & (0xF << (256-4))] = leaf_sibling
-                    branch_node[(key_remainder << (prefix_len*4)) & (0xF << (256-4))] = leaf_new
-
-                    branch_raw = rlp_encode_list(branch_node)
-                    trie.put_node(branch_raw)
-                    branch_root = mpt_hash(branch_raw)
-
-                    # and if they had a common prefix, they need to get extended to
-                    if prefix_len > 0:
-                        extension_path = encode_path(prefix_path, prefix_len, False)
-                        extension_node = [extension_path, branch_root]
-
-                        extension_raw = rlp_encode_list(extension_node)
-                        trie.put_node(extension_raw)
-                        extension_root = mpt_hash(extension_raw)
-                        next.mpt_write_root = extension_root
-                    else:
-                        next.mpt_write_root = branch_root
-
-                    return next
             elif new_depth < parent.mpt_lookup_key_nibbles:
                 # the node we are looking for does not exist,
                 # but another leaf/extension exists with a shorter key that is a prefix of our key
 
-                remainder_nibble_len = parent.mpt_lookup_key_nibbles - parent.mpt_lookup_nibble_depth
-                assert path_nibble_len < remainder_nibble_len  # sanity check
 
-                prefix_path, prefix_len = common_nibble_prefix(
-                    key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
-
-                target_sibling = parent_data_li[1]
-                target_new = last.mpt_write_root
-
-                # if there's more than 1 nibble difference,
-                # our value needs a leaf/extension node and can't just go into the branch slot
-                if path_nibble_len + 1 < remainder_nibble_len:
-                    remaining_len = remainder_nibble_len - prefix_len - 1
-                    target_new_path = encode_path(key_remainder << ((prefix_len+1)*4), remaining_len, terminating)
-                    target_new_node = [target_new_path, target_new]
-
-                    target_new_raw = rlp_encode_list(target_new_node)
-                    trie.put_node(target_new_raw)
-                    target_new = mpt_hash(target_new_raw)
-
-                # now split by putting them in a branch
-                branch_node = [b""] * 17
-                branch_node[16] = target_sibling
-                branch_node[(key_remainder << (prefix_len*4)) & (0xF << (256-4))] = target_new
-
-                branch_raw = rlp_encode_list(branch_node)
-                trie.put_node(branch_raw)
-                branch_root = mpt_hash(branch_raw)
-
-                # and if they had a common prefix, they need to get extended to
-                if prefix_len > 0:
-                    extension_path = encode_path(prefix_path, prefix_len, False)
-                    extension_node = [extension_path, branch_root]
-
-                    extension_raw = rlp_encode_list(extension_node)
-                    trie.put_node(extension_raw)
-                    extension_root = mpt_hash(extension_raw)
-                    next.mpt_write_root = extension_root
-                else:
-                    next.mpt_write_root = branch_root
-
-                return next
 
             elif new_depth > parent.mpt_lookup_key_nibbles:
                 # the node we are looking for does not exist,
                 # but another leaf/extension exists with a longer key of which our key is a prefix
 
-                remainder_nibble_len = parent.mpt_lookup_key_nibbles - parent.mpt_lookup_nibble_depth
-                assert path_nibble_len > remainder_nibble_len  # sanity check
 
-                prefix_path, prefix_len = common_nibble_prefix(
-                    key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
-
-                target_sibling = parent_data_li[1]
-                target_new = last.mpt_write_root
-
-                # if there's more than 1 nibble difference,
-                # the other needs a leaf/extension node and can't just go into the branch slot
-                if path_nibble_len > remainder_nibble_len + 1:
-                    remaining_len = path_nibble_len - prefix_len - 1
-                    target_sibling_path = encode_path(path_u256 << ((prefix_len+1)*4), remaining_len, terminating)
-                    target_sibling_node = [target_sibling_path, target_sibling]
-
-                    target_sibling_raw = rlp_encode_list(target_sibling_node)
-                    trie.put_node(target_sibling_raw)
-                    target_sibling = mpt_hash(target_sibling_raw)
-
-                # now split by putting them in a branch
-                branch_node = [b""] * 17
-                branch_node[(path_u256 << (prefix_len*4)) & (0xF << (256-4))] = target_sibling
-                branch_node[16] = target_new
-
-                branch_raw = rlp_encode_list(branch_node)
-                trie.put_node(branch_raw)
-                branch_root = mpt_hash(branch_raw)
-
-                # and if they had a common prefix, they need to get extended to
-                if prefix_len > 0:
-                    extension_path = encode_path(prefix_path, prefix_len, False)
-                    extension_node = [extension_path, branch_root]
-
-                    extension_raw = rlp_encode_list(extension_node)
-                    trie.put_node(extension_raw)
-                    extension_root = mpt_hash(extension_raw)
-                    next.mpt_write_root = extension_root
-                else:
-                    next.mpt_write_root = branch_root
-
-                return next
 
         elif len(parent_data_li) == 17:
 
             if parent.mpt_lookup_nibble_depth == parent.mpt_lookup_key_nibbles:
-                # we arrived at the key depth already, there are other nodes with longer keys,
-                # but we only care about the vt node (17th of branch)
-                parent_data_li[16] = last.mpt_write_root
 
-                branch_raw = rlp_encode_list(parent_data_li)
-                trie.put_node(branch_raw)
-                branch_root = mpt_hash(branch_raw)
-                next.mpt_write_root = branch_root
-
-                # stay in the same MPT mode, this is a new mpt_write_root to bubble up
-                return next
 
             # if taking any other branch node value than the depth of the node itself, we go 1 nibble deeper,
             # and must not exceed the max depth (all keys are 32 bytes or less,
@@ -445,16 +519,7 @@ def make_writer_step_gen(trie: MPT) -> Processor:
             # get the top 4 bits, after the lookup so far
             branch_lookup_nibble = (parent.mpt_lookup_key << (parent.mpt_lookup_nibble_depth*4)) >> (256 - 4)
 
-            # new node to bubble up into
-            parent_data_li[branch_lookup_nibble] = last.mpt_write_root
 
-            branch_raw = rlp_encode_list(parent_data_li)
-            trie.put_node(branch_raw)
-            branch_root = mpt_hash(branch_raw)
-            next.mpt_write_root = branch_root
-
-            # stay in the same MPT mode, this is a new mpt_write_root to bubble up
-            return next
 
     return write_step
 
