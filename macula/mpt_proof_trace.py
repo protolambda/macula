@@ -159,9 +159,16 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                 # Empty value means we can skip to the next parent, the key didn't exist, or the value is empty.
                 # regardless, it will have to be overwritten by modifying the parent.
 
-                # TODO: create leaf node if lookup is deeper
+                target_root = last.mpt_current_root
+                remaining_depth = content.mpt_lookup_key_nibbles - content.mpt_lookup_nibble_depth
+                # if the write is deeper than this NULL value, then place a leaf with prefix.
+                if remaining_depth > 0:
+                    target_prefix = content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)
+                    target_new_raw = rlp_encode_list([target_prefix, target_root])
+                    trie.put_node(target_new_raw)
+                    target_root = mpt_hash(target_new_raw)
 
-                next.mpt_current_root = last.mpt_current_root
+                next.mpt_current_root = target_root
                 return next
             else:
                 raise NotImplementedError
