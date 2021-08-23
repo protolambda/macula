@@ -205,11 +205,14 @@ class Step(Container):
     # MPT scope
     # ------------------
     # On a read: recurse from top to bottom, then store bottom node
-    # On a write: recurse from top to bottom, then unwind back
+    # On a write: recurse from top to bottom, modify to write, then unwind back
+    # On a delete: recurse from top to bottom, delete, propagate deletion, unwind back,
+    #  and collapse branch nodes where necessary by grafting the remaining branch child and parent.
 
     # Instructs how to execute
     mpt_mode: uint8
-    # what to write at the mpt_lookup_key, if in writing mode
+    # what to write at the mpt_lookup_key, if in writing mode,
+    # only used to start writing once done with the reading part.
     mpt_write_root: ByteList[32]
     # after finishing the mode, continue with this next mode.
     mpt_mode_on_finish: uint8
