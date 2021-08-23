@@ -4,9 +4,23 @@ from enum import Enum
 
 
 class MPTAccessMode(Enum):
+    # top to bottom tree traversal, get value by key, starting from the given MPT root
     READING = 0
+    # after reading from top to closest destination, modify the node and bubble up the change
     WRITING = 1
-    DELETING = 2  # TODO
+    # after reading from top to closest node, remove it, and bubble up the change. Removal may require grafting.
+    DELETING = 2
+    # To graft a sibling node to a parent node (when a branch gets stale on deletion of a node)
+    # first step: open the sibling node, get its key path segment (if any), append to grafting path
+    GRAFTING_A = 3
+    # second step: on the parent,
+    #  if parent is an extension: rewrite with (extension_prefix ++ grafting_path) as path
+    #  if parent is a branch: write the node into place (using extension if len(path) > 0)
+    #  (parent cannot be a leaf or empty node)
+    # However, the child can be terminating, and determines the mode of the parent if the parent is leaf/extension.
+    # Instead of introducing another var, we split mode B.
+    GRAFTING_B_terminating_child = 4
+    GRAFTING_B_continuing_child = 5
 
 
 def rlp_decode_list(data: bytes) -> list:
@@ -19,6 +33,10 @@ def rlp_encode_list(items: list) -> bytes:
 
 def mpt_hash(data: bytes) -> Bytes32:
     return Bytes32()  # TODO
+
+
+BLANK_NODE = b""  # TODO: empty node doesn't have special RLP encoding, does it?
+BLANK_ROOT = mpt_hash(BLANK_NODE)
 
 
 # 2-item nodes:
@@ -89,8 +107,8 @@ def common_nibble_prefix(a: uint256, b: uint256, a_len: int, b_len: int) -> (uin
     return prefix, max_common
 
 
-def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
-    def reader_step_gen(trac: StepsTrace) -> Step:
+def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
+    def mpt_step_gen(trac: StepsTrace) -> Step:
         last = trac.last()
 
         # Magic:
@@ -114,13 +132,11 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                     value = trie.get_node(content.mpt_current_root)
                     assert mpt_hash(value) == next.mpt_current_root
 
-                if value == b"":
-                    # if we got a branch at the very last key depth,
-                    # then we may end with an empty node at branch slot,
-                    # this is not technically an error w.r.t. MPT, but shouldn't pass as OK.
-                    next.mpt_fail_lookup = 10
+                # TODO: the returned value may be an RLP-encoded empty byte string if the bottom node
+                #  is an empty branch node. Counts as error?
 
                 next.mpt_value = value
+                # TODO: after reading, the current-root/value is to be read, not to replace the root reference. Needs different mode.
                 next.mpt_mode = content.mpt_mode_on_finish
                 return next
 
@@ -138,6 +154,29 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
             # we're unwinding back to parent nodes, not on last node.
             content = trac.by_index(last.mpt_parent_node_step)
             next = content.copy()
+        elif access == MPTAccessMode.DELETING:
+            # have we bubbled up to the top yet?
+            if last.mpt_lookup_nibble_depth == 0:
+                # If we're at the top, we have deleted the last item in the trie.
+                # For an empty trie, write an empty node
+                next = last.copy()
+                next.mpt_mode = last.mpt_mode_on_finish
+                trie.put_node(BLANK_NODE)
+                next.mpt_current_root = BLANK_ROOT
+                return next
+
+            # similar to writing, after reading from top to bottom,
+            # we bubble back to delete the necessary nodes
+            content = trac.by_index(last.mpt_parent_node_step)
+            next = content.copy()
+        elif access == MPTAccessMode.GRAFTING_A:
+            # back to the parent after we get the details of the current node to graft with
+            content = trac.by_index(last.mpt_parent_node_step)
+            next = content.copy()
+        elif access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
+            # bubble up the graft result after modifying the parent end of our graft
+            content = trac.by_index(last.mpt_parent_node_step)
+            next = content.copy()
         else:
             raise NotImplementedError
 
@@ -151,7 +190,7 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
             if access == MPTAccessMode.READING:
                 next.mpt_current_root = Bytes32()
                 # stop recursing deeper, null value. (e.g. due to empty branch slot in parent node on our path)
-                next.mpt_value = b""
+                next.mpt_value = BLANK_NODE
                 next.mpt_fail_lookup = 1
                 next.mpt_mode = content.mpt_mode_on_finish
                 return next
@@ -170,6 +209,11 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
 
                 next.mpt_current_root = target_root
                 return next
+            elif access == MPTAccessMode.DELETING:
+                # bubbled up to an already empty node? Then it didn't exist, should never happen.
+                raise Exception("deletion should not have been started, the node was not present (empty already)")
+            elif access in (MPTAccessMode.GRAFTING_A, MPTAccessMode.GRAFTING_B_terminating_child, MPTAccessMode.GRAFTING_B_continuing_child):
+                raise Exception("cannot graft to a NULL parent")
             else:
                 raise NotImplementedError
 
@@ -177,6 +221,14 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
             encoded_path = data_li[0]  # path is the first value of the tuple, regardless of extension/leaf type choice
             assert len(encoded_path) >= 1
             terminating, path_u256, path_nibble_len = decode_path(encoded_path)
+
+            if access == MPTAccessMode.GRAFTING_A:
+                # TODO: take path, append to grafting path, and bubble up with GRAFTING_B_...
+                return next
+            elif access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
+                terminating_child = access == MPTAccessMode.GRAFTING_B_terminating_child
+                # TODO: receive graft path, append to own path, construct as new leaf/extension, bubble up as WRITING
+                return next
 
             key_remainder = content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)
             new_depth = content.mpt_lookup_nibble_depth + path_nibble_len
@@ -206,6 +258,12 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                         trie.put_node(new_node_raw)
 
                         # stay in the same MPT mode, this is a new mpt_current_root to bubble up
+                        return next
+                    elif access == MPTAccessMode.DELETING:
+                        # delete the node altogether,
+                        # and bubble up to delete any other nodes that would otherwise reference it as last thing.
+                        trie.put_node(BLANK_NODE)
+                        next.mpt_current_root = BLANK_ROOT
                         return next
                     else:
                         raise NotImplementedError
@@ -266,11 +324,14 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                             next.mpt_current_root = branch_root
 
                         return next
+                    elif access == MPTAccessMode.DELETING:
+                        raise Exception("deletion should not have been started,"
+                                        " the node was not present (partially common prefix)")
                     else:
                         raise NotImplementedError
             elif new_depth < content.mpt_lookup_key_nibbles:
                 # the node we are looking for does not exist,
-                # but another leaf exists with a shorter key that is a prefix of our key
+                # but another leaf/extension exists with a shorter key that is a prefix of our key
 
                 if access == MPTAccessMode.READING:
                     if terminating:
@@ -286,12 +347,12 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                         key_part = key_remainder & shifted_mask
 
                         if key_part != path_u256:
-                            # extension leads to some other key, not what we are looking for
+                            # extension/leaf leads to some other key, not what we are looking for
                             next.mpt_fail_lookup = 6
                             next.mpt_mode = content.mpt_mode_on_finish
                             return next
                         else:
-                            # extension matches, it's on our path, we can find the node!
+                            # extension/leaf matches, it's on our path, we can find the node!
 
                             # the value of the extension will be the next hashed node to expand into
                             next.mpt_current_root = data_li[1]
@@ -342,6 +403,9 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                         next.mpt_current_root = branch_root
 
                     return next
+                elif access == MPTAccessMode.DELETING:
+                    raise Exception("deletion should not have been started,"
+                                    " the node was not present (partially common prefix, shorter key)")
                 else:
                     raise NotImplementedError
 
@@ -394,17 +458,26 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                         next.mpt_current_root = extension_root
                     else:
                         next.mpt_current_root = branch_root
-
+                    raise Exception("deletion should not have been started,"
+                                    " the node was not present (partially common prefix, longer key)")
                     return next
 
                 else:
                     raise NotImplementedError
         elif len(data_li) == 17:
 
+            if access == MPTAccessMode.GRAFTING_A:
+                # if the child is a branch, it has no prefixing path segment,
+                # so it can grafted without modifying the graft path.
+                # keep the mpt_current_root, and bubble back up.
+                return next
+
             if content.mpt_lookup_nibble_depth == content.mpt_lookup_key_nibbles:
                 # we arrived at the key depth already, there are other nodes with longer keys,
                 # but we only care about the vt node (17th of branch)
 
+                if access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
+                    raise Exception("invalid MPT: cannot graft child node to branch vt slot, vt is always terminal")
                 if access == MPTAccessMode.READING:
                     next.mpt_current_root = data_li[16]
                     # stay in the same MPT mode, this is a new mpt_current_root to expand
@@ -421,6 +494,26 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
 
                     # stay in the same MPT mode, this is a new mpt_current_root to bubble up
                     return next
+                elif access == MPTAccessMode.DELETING:
+                    # if there is only a single other branch value left, we need to remove the branch,
+                    # and graft the remaining value to the parent.
+                    remaining_count = len(node for node in data_li[:16] if node != b"")
+                    if remaining_count <= 1:
+                        if remaining_count == 0:
+                            # MPT was invalid, a branch node with only a vt node should not exist
+                            raise Exception("invalid MPT")
+                        # TODO: grafting work
+                    else:
+                        # more than 1 node remaining in the branch, we can just empty the vt slot
+                        # and bubble up the change as a write-operation.
+                        data_li[16] = BLANK_NODE
+                        branch_raw = rlp_encode_list(data_li)
+                        trie.put_node(branch_raw)
+                        branch_root = mpt_hash(branch_raw)
+                        next.mpt_current_root = branch_root
+                        # the branch stays with remaining children, switch to writing mode
+                        next.mpt_mode = MPTAccessMode.WRITING.value
+                        return next
                 else:
                     raise NotImplementedError
 
@@ -442,17 +535,60 @@ def make_reader_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                 # new node to bubble up into
                 data_li[branch_lookup_nibble] = last.mpt_current_root
 
-                branch_raw = rlp_encode_list(parent_data_li)
+                branch_raw = rlp_encode_list(data_li)
                 trie.put_node(branch_raw)
                 branch_root = mpt_hash(branch_raw)
                 next.mpt_current_root = branch_root
 
                 # stay in the same MPT mode, this is a new mpt_current_root to bubble up
                 return next
+            elif access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
+                # just like writing, except we need a new leaf/extension node to embed the graft path
+                # TODO
+                return next
+            elif access == MPTAccessMode.DELETING:
+                # if we entered a branch node on the path to our node, but didn't reach our node,
+                # then finishing a deletion means that we need to remove the branch if there's only one other node left,
+                # or propagate changes if more are left.
+                data_li[branch_lookup_nibble] = BLANK_NODE
+                remaining_count = len(node for node in data_li if node != b"")
+                if remaining_count <= 1:
+                    if remaining_count == 0:
+                        # MPT was invalid, a branch node with only a vt node should not exist
+                        raise Exception("invalid MPT")
+                    # There is only a single other branch value left, we need to remove the branch,
+                    # and graft the remaining value to the parent.
+
+                    # Remember the path to insert between the parent node and the remaining leaf node
+                    remaining_index = [node != b"" for node in data_li].index(True)
+                    if remaining_index == 16:
+                        next.mpt_graft_key_segment = 0
+                        next.mpt_graft_key_nibbles = 0
+                    else:
+                        next.mpt_graft_key_segment = uint256(remaining_index)
+                        next.mpt_graft_key_nibbles = 1
+                    remaining_node = data_li[remaining_index]
+                    next.mpt_current_root = remaining_node
+                    next.mpt_mode = MPTAccessMode.GRAFTING_A.value
+                    # after first visiting the grafted child,
+                    # immediately go to the parent (we removed this intermediate branch)
+                    next.mpt_parent_node_step = content.mpt_parent_node_step
+                    return next
+                else:
+                    # more than 1 node remaining in the branch, we can just empty our slot
+                    # and bubble up the change as a write-operation.
+                    data_li[branch_lookup_nibble] = BLANK_NODE
+                    branch_raw = rlp_encode_list(data_li)
+                    trie.put_node(branch_raw)
+                    branch_root = mpt_hash(branch_raw)
+                    next.mpt_current_root = branch_root
+                    # the branch stays with remaining children, switch to writing mode
+                    next.mpt_mode = MPTAccessMode.WRITING.value
+                    return next
             else:
                 raise NotImplementedError
 
-    return reader_step_gen
+    return mpt_step_gen
 
 
 # TODO: init claim with mpt_current_root set to state-root (or account storage root)
@@ -476,7 +612,7 @@ def next_mpt_step(trac: StepsTrace) -> Step:
         return next
 
     if mpt_mode == 1:  # reading
-        proc = make_reader_step_gen(trie, MPTAccessMode.READING)
+        proc = make_mpt_step_gen(trie, MPTAccessMode.READING)
         return proc(trac)
 
     if mpt_mode == 2:  # writing start (value to be mapped to node root)
@@ -497,7 +633,7 @@ def next_mpt_step(trac: StepsTrace) -> Step:
         return next
 
     if mpt_mode == 4:  # actual writing bubble-up process
-        proc = make_reader_step_gen(trie, MPTAccessMode.WRITING)
+        proc = make_mpt_step_gen(trie, MPTAccessMode.WRITING)
         return proc(trac)
 
     raise Exception("unexpected MPT mode: %d" % mpt_mode)

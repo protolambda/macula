@@ -231,6 +231,11 @@ class Step(Container):
     # how much of the key has been read
     mpt_lookup_nibble_depth: uint64
 
+    # When removing branch nodes, and grafting remaining child with parent,
+    # track the part of the key to insert between the two. Can be empty.
+    mpt_graft_key_segment: uint256
+    mpt_graft_key_nibbles: uint64
+
     mpt_value: ByteList[2048]
 
 
