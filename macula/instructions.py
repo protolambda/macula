@@ -2,7 +2,7 @@ from .trace import StepsTrace, Processor
 from .step import *
 from .exec_mode import *
 
-def progress(step: Step) -> step:
+def progress(step: Step) -> Step:
     # progress to the next opcode. Common between a lot of opcode steps
     step.pc += 1
     step.exec_mode = ExecMode.OpcodeLoad.value
@@ -624,6 +624,6 @@ def make_swap(size: uint8) -> Processor:
         next = last.copy()
         next.stack.swap(size)
         raise progress(next)
-    return op_dup
+    return op_swap
 
 
