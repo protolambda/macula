@@ -93,11 +93,29 @@ class Stack(List[Bytes32, 1024]):
     def tweak_u256(self, v: uint256):
         self[len(self)-1] = uint256_to_b32(v)
 
+    def tweak_back_b32(self, v: Bytes32, n: int):
+        length = len(self)
+        if n+1 > length:
+            raise Exception("bad stack access, interpreter bug")
+        self[length-n-1] = v
+
+    def tweak_back_u256(self, v: uint256, n: int):
+        length = len(self)
+        if n+1 > length:
+            raise Exception("bad stack access, interpreter bug")
+        self[length-n-1] = uint256_to_b32(v)
+
     def back_b32(self, n: int) -> Bytes32:
         length = len(self)
         if n+1 > length:
             raise Exception("bad stack access, interpreter bug")
         return self[length - n - 1]
+
+    def back_u256(self, n: int) -> uint256:
+        length = len(self)
+        if n+1 > length:
+            raise Exception("bad stack access, interpreter bug")
+        return b32_to_uint256(self[length - n - 1])
 
 
 # Needs to be as big as memory, all of it can be returned
@@ -160,7 +178,7 @@ class Step(Container):
 
     # History scope
     # ------------------
-    # Most recent 256 blocks (excluding the block itself)
+    # Most recent 256 blocks (excluding the block itself). Trick: ring-buffer, key = number % 256
     block_hashes: BlockHistory
 
     # Block scope

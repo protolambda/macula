@@ -343,8 +343,55 @@ def op_call_data_size(trac: StepsTrace) -> Step:
 def op_call_data_copy(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    # we split this up in steps, until the copy is done
+
+    mem_offset = last.stack.back_u256(0)
+    data_offset = last.stack.back_u256(1)
+    length = last.stack.back_u256(2)
+
+    if data_offset >= 2**64:  # overflow check, stays well under uint256 this way
+        data_offset = 2**64 - 1
+
+    # optimization: if not aligned with 32-bytes, make it align
+    delta = 32 - (data_offset % 32)
+    # we may already be nearly done, length within 32 bytes
+    if delta > length:
+        delta = length
+
+    if length > 0:
+        # Different than other copy funcs:
+        # copying from input data beyond actual range is allowed, it just results in zeroes.
+        # Complete the (maybe not aligned) last bit of actual input,
+        # then start on the padding work in next steps (if any)
+        if data_offset < len(last.input) < data_offset+delta:
+            delta = len(last.input) - data_offset
+
+        if data_offset >= len(last.input):
+            data_copy = b"\x00" * delta
+        else:
+            data_copy = bytes(last.input[data_offset:data_offset+delta])
+
+        # touches two words of memory if the memory offset is not aligned, but that's still manageable
+        next.memory[mem_offset:mem_offset+delta] = data_copy
+        mem_offset += delta
+        data_offset += delta
+        length -= delta
+
+    # complete or continue with remaining copy work
+    if length == 0:
+        # copy finished, we can progress to the next opcode, after popping the stack vars
+        next.stack.pop()
+        next.stack.pop()
+        next.stack.pop()
+        return progress(next)
+    else:
+        # we'll just use the existing stack vars to track progress. We get rid of them at the end.
+        next.stack.tweak_back_u256(mem_offset, 0)
+        next.stack.tweak_back_u256(data_offset, 1)
+        next.stack.tweak_back_u256(length, 2)
+        # don't go to the next opcode yet, but instead repeat this opcode, now with the reduced work.
+        # we keep doing this, until the copy work is done.
+        return next
 
 
 def op_return_data_size(trac: StepsTrace) -> Step:
@@ -357,8 +404,50 @@ def op_return_data_size(trac: StepsTrace) -> Step:
 def op_return_data_copy(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    # we split this up in steps, until the copy is done
+
+    mem_offset = last.stack.back_u256(0)
+    data_offset = last.stack.back_u256(1)
+    length = last.stack.back_u256(2)
+
+    if data_offset >= 2**64:  # overflow check, stays well under uint256 this way
+        data_offset = 2**64 - 1
+
+    # Different than other copy instructions:
+    # check bounds of the copy (memory is checked by interpreter, return data is not)
+    if data_offset >= 2**63 or length >= 2**63 or len(last.ret_data) < data_offset+length:
+        next.exec_mode = ExecMode.ErrReturnDataOutOfBounds.value
+        return next
+
+    # optimization: if not aligned with 32-bytes, make it align
+    delta = 32 - (data_offset % 32)
+    # we may already be nearly done, length within 32 bytes
+    if delta > length:
+        delta = length
+
+    if length > 0:
+        data_copy = bytes(last.ret_data[data_offset:data_offset+delta])
+        # touches two words of memory if the memory offset is not aligned, but that's still manageable
+        next.memory[mem_offset:mem_offset+delta] = data_copy
+        mem_offset += delta
+        data_offset += delta
+        length -= delta
+
+    # complete or continue with remaining copy work
+    if length == 0:
+        # copy finished, we can progress to the next opcode, after popping the stack vars
+        next.stack.pop()
+        next.stack.pop()
+        next.stack.pop()
+        return progress(next)
+    else:
+        # we'll just use the existing stack vars to track progress. We get rid of them at the end.
+        next.stack.tweak_back_u256(mem_offset, 0)
+        next.stack.tweak_back_u256(data_offset, 1)
+        next.stack.tweak_back_u256(length, 2)
+        # don't go to the next opcode yet, but instead repeat this opcode, now with the reduced work.
+        # we keep doing this, until the copy work is done.
+        return next
 
 
 
@@ -379,8 +468,44 @@ def op_code_size(trac: StepsTrace) -> Step:
 def op_code_copy(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    # we split this up in steps, until the copy is done
+
+    mem_offset = last.stack.back_u256(0)
+    code_offset = last.stack.back_u256(1)
+    length = last.stack.back_u256(2)
+
+    if code_offset >= 2**64:  # overflow check, stays well under uint256 this way
+        code_offset = 2**64 - 1
+
+    # optimization: if not aligned with 32-bytes, make it align
+    delta = 32 - (code_offset % 32)
+    # we may already be nearly done, length within 32 bytes
+    if delta > length:
+        delta = length
+
+    if length > 0:
+        code_copy = bytes(last.code[code_offset:code_offset+delta])
+        # touches two words of memory if the memory offset is not aligned, but that's still manageable
+        next.memory[mem_offset:mem_offset+delta] = code_copy
+        mem_offset += delta
+        code_offset += delta
+        length -= delta
+
+    # complete or continue with remaining copy work
+    if length == 0:
+        # copy finished, we can progress to the next opcode, after popping the stack vars
+        next.stack.pop()
+        next.stack.pop()
+        next.stack.pop()
+        return progress(next)
+    else:
+        # we'll just use the existing stack vars to track progress. We get rid of them at the end.
+        next.stack.tweak_back_u256(mem_offset, 0)
+        next.stack.tweak_back_u256(code_offset, 1)
+        next.stack.tweak_back_u256(length, 2)
+        # don't go to the next opcode yet, but instead repeat this opcode, now with the reduced work.
+        # we keep doing this, until the copy work is done.
+        return next
 
 
 def op_ext_code_copy(trac: StepsTrace) -> Step:
@@ -407,7 +532,18 @@ def op_gas_price(trac: StepsTrace) -> Step:
 def op_block_hash(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
+    num = last.stack.peek_u256()
+    # upper bound (excl.) current block number
+    upper = last.block_number
+    # lower bound (incl.): ensure 256 history, or clip to 0 genesis
+    if upper < 257:
+        lower = 0
+    else:
+        lower = upper - 256
+    if num >= lower and num < upper:
+        next.stack.tweak_b32(last.block_hashes[num % 256])
+    else:
+        next.stack.tweak_b32(Bytes32())
     raise NotImplementedError
 
 
@@ -462,7 +598,7 @@ def op_mload(trac: StepsTrace) -> Step:
 def op_mstore(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    m_start, val = last.stack.pop_u256(), last.stack.pop_u256()
+    m_start, val = next.stack.pop_u256(), next.stack.pop_u256()
     next.memory.set_32_bytes(m_start, val)
     return progress(next)
 
@@ -470,7 +606,7 @@ def op_mstore(trac: StepsTrace) -> Step:
 def op_mstore8(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    off, val = last.stack.pop_u256(), last.stack.pop_u256()
+    off, val = next.stack.pop_u256(), next.stack.pop_u256()
     # safe, memory-size and gas funcs check this already
     next.memory[off] = uint8(val & 0xff)
     return progress(next)
@@ -492,7 +628,7 @@ def op_sstore(trac: StepsTrace) -> Step:
 def op_jump(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    pos = last.stack.pop_u256()
+    pos = next.stack.pop_u256()
     if not last.code.valid_jump_dest(pos):
         next.exec_mode = ExecMode.ErrInvalidJump
         return next
@@ -503,7 +639,7 @@ def op_jump(trac: StepsTrace) -> Step:
 def op_jump_i(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    pos, cond = last.stack.pop_u256(), last.stack.pop_u256()
+    pos, cond = next.stack.pop_u256(), next.stack.pop_u256()
     if cond != uint256(0):
         if not last.code.valid_jump_dest(pos):
             next.exec_mode = ExecMode.ErrInvalidJump
@@ -628,16 +764,42 @@ def make_log(size: int) -> Processor:
 def op_push1(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    code_len = len(last.code)
+    pc = last.pc + 1  # read after current opcode
+    if pc < code_len:
+        val: uint8 = last.code[pc]
+        next.stack.push_u256(uint256(val))
+    else:
+        next.stack.push_u256(uint256(0))
+    pc += 1  # continue after pushed byte (will be 0 STOP opcode if already beyond code length)
+    next.pc = pc
+    next.exec_mode = ExecMode.OpcodeLoad.value
+    return next
 
 
-def make_push(size: int, pushByteSize: int) -> Processor:
+def make_push(size: int, push_byte_size: int) -> Processor:
+    assert push_byte_size <= 32
     def op_push(trac: StepsTrace) -> Step:
         last = trac.last()
         next = last.copy()
-        # TODO
-        raise NotImplementedError
+        # don't read any code out of bounds
+        code_len = len(last.code)
+        start_min = code_len
+        pc = last.pc
+        if pc + 1 < start_min:
+            start_min = pc + 1
+        end_min = code_len
+        if start_min + push_byte_size < end_min:
+            end_min = start_min + push_byte_size
+        # push_byte_size <= 32, get the code (it may not align with 32 byte tree leafs though)
+        content = last.code[start_min:end_min]
+        if end_min - start_min < 32:
+            # right pad to 32 bytes
+            content += b"\x00" * (32 - (end_min - start_min))
+        next.stack
+        next.pc = pc + size
+        next.exec_mode = ExecMode.OpcodeLoad.value
+        return next
     return op_push
 
 
