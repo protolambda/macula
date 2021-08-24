@@ -455,20 +455,26 @@ def op_pop(trac: StepsTrace) -> Step:
 def op_mload(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    offset = uint64(last.stack.peek_u256())
+    next.stack.tweak_u256(last.memory.get_ptr_32_bytes(offset))
+    return progress(next)
 
 def op_mstore(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    m_start, val = last.stack.pop_u256(), last.stack.pop_u256()
+    next.memory.set_32_bytes(m_start, val)
+    return progress(next)
+
 
 def op_mstore8(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    off, val = last.stack.pop_u256(), last.stack.pop_u256()
+    # safe, memory-size and gas funcs check this already
+    next.memory[off] = uint8(val & 0xff)
+    return progress(next)
+
 
 def op_sload(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -497,8 +503,18 @@ def op_jump(trac: StepsTrace) -> Step:
 def op_jump_i(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    pos, cond = last.stack.pop_u256(), last.stack.pop_u256()
+    if cond != uint256(0):
+        if not last.code.valid_jump_dest(pos):
+            next.exec_mode = ExecMode.ErrInvalidJump
+            return next
+        # perform jump
+        next.pc = pos
+        next.exec_mode = ExecMode.OpcodeLoad.value
+        return next
+    else:
+        # just go to next opcode, jump conditional was false
+        return progress(next)
 
 
 def op_jump_dest(trac: StepsTrace) -> Step:
@@ -507,11 +523,13 @@ def op_jump_dest(trac: StepsTrace) -> Step:
     # no-op, except for moving onto the next opcode
     return progress(next)
 
+
 def op_pc(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     next.stack.push_u256(uint256(last.pc))
     return progress(next)
+
 
 def op_memsize(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -519,11 +537,13 @@ def op_memsize(trac: StepsTrace) -> Step:
     next.stack.push_u256(uint256(len(last.memory)))
     return progress(next)
 
+
 def op_memsize(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     next.stack.push_u256(uint256(last.gas))
     return progress(next)
+
 
 def op_create(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -531,11 +551,13 @@ def op_create(trac: StepsTrace) -> Step:
     # TODO
     raise NotImplementedError
 
+
 def op_create2(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     # TODO
     raise NotImplementedError
+
 
 def op_call(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -543,11 +565,13 @@ def op_call(trac: StepsTrace) -> Step:
     # TODO
     raise NotImplementedError
 
+
 def op_call_code(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     # TODO
     raise NotImplementedError
+
 
 def op_delegate_call(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -555,11 +579,13 @@ def op_delegate_call(trac: StepsTrace) -> Step:
     # TODO
     raise NotImplementedError
 
+
 def op_static_call(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     # TODO
     raise NotImplementedError
+
 
 def op_return(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -567,11 +593,13 @@ def op_return(trac: StepsTrace) -> Step:
     # TODO
     raise NotImplementedError
 
+
 def op_revert(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     # TODO
     raise NotImplementedError
+
 
 def op_stop(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -580,11 +608,13 @@ def op_stop(trac: StepsTrace) -> Step:
     next.exec_mode = ExecMode.ErrSTOP.value
     return next
 
+
 def op_self_destruct(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     # TODO
     raise NotImplementedError
+
 
 def make_log(size: int) -> Processor:
     def op_log(trac: StepsTrace) -> Step:
@@ -594,11 +624,13 @@ def make_log(size: int) -> Processor:
         raise NotImplementedError
     return op_log
 
+
 def op_push1(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     # TODO
     raise NotImplementedError
+
 
 def make_push(size: int, pushByteSize: int) -> Processor:
     def op_push(trac: StepsTrace) -> Step:
@@ -608,6 +640,7 @@ def make_push(size: int, pushByteSize: int) -> Processor:
         raise NotImplementedError
     return op_push
 
+
 def make_dup(size: uint8) -> Processor:
     def op_dup(trac: StepsTrace) -> Step:
         last = trac.last()
@@ -616,9 +649,11 @@ def make_dup(size: uint8) -> Processor:
         raise progress(next)
     return op_dup
 
+
 def make_swap(size: uint8) -> Processor:
     # switch n + 1 otherwise n would be swapped with n
     size += 1
+
     def op_swap(trac: StepsTrace) -> Step:
         last = trac.last()
         next = last.copy()

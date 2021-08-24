@@ -21,6 +21,22 @@ class Memory(List[uint8, 64 << 20]):
         for i in range(32):
             self.append(0)
 
+    def get_ptr_32_bytes(self, offset: uint64) -> Bytes32:
+        # note: gas and memory size checks ensure the below is safe from
+        # over/under-flows and out-of-bound reads.
+        if len(self) > offset:
+            # note: may not align with 32-byte tree leaf values
+            # (bytes are packed together in the binary tree that backs the memory),
+            # but can be read in max 2 adjacent leaf nodes.
+            return Bytes32(self[offset:offset+32])
+        return Bytes32()
+
+    def set_32_bytes(self, offset: uint64, val: Bytes32):
+        if offset + 32 > len(self):
+            raise Exception("invalid memory access, must be a bug")
+        # note: alignment, either touches one or two tree leaf nodes.
+        self[offset:offset+32] = val
+
 
 def uint256_to_b32(v: uint256) -> Bytes32:
     # encode_bytes returns little-endian, we want big-endian
