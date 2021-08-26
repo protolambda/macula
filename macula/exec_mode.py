@@ -34,5 +34,9 @@ class ExecMode(Enum):
     ErrGasUintOverflow = 0x45
     ErrInvalidJump = 0x46
     ErrReturnDataOutOfBounds = 0x47
+    ErrDepth = 0x48
+    ErrInsufficientBalance = 0x49
+    ErrExecutionReverted = 0x4a
+
 
 exec_mode_err_range = (0x40, 0x4f)

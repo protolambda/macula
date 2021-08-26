@@ -1,6 +1,7 @@
 from .trace import StepsTrace, Processor
 from .step import *
 from .exec_mode import *
+from .params import *
 
 def progress(step: Step) -> Step:
     # progress to the next opcode. Common between a lot of opcode steps
@@ -698,8 +699,144 @@ def op_create2(trac: StepsTrace) -> Step:
 def op_call(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+
+    # stack layout:
+    # 0: gas
+    # 1: addr
+    # 2: value
+    # 3: input offset
+    # 4: input size
+    # 5: return offset
+    # 6: return size
+
+    part = last.sub_index
+
+    # Part 0: reset the input
+    if part == 0:
+        next.input = Input()
+        next.sub_index = 1
+        return next
+
+    # Part 1: load memory into the input, in small steps. A.k.a. the call arguments.
+    if part == 1:
+        in_size = next.stack.back_u256(4)
+        if in_size > 0:
+            in_offset = next.stack.back_u256(3)
+
+            # optimization: if not aligned with 32-bytes, make it align
+            delta = 32 - (in_offset % 32)
+            # we may already be nearly done, length within 32 bytes
+            if delta > in_size:
+                delta = in_size
+
+            # at most 32 bytes, aligned with the 32-byte memory leaves
+            input_data = last.memory[in_offset:in_offset+delta]
+            # append to existing input (touches 2 packed leaf nodes at most, and the length mixin)
+            next.input += input_data
+
+            # next step will have adjusted params, to continue the copy process
+            # the stack is cleared in the call anyway, and arguments popped away after the call
+            next.stack.tweak_back_u256(in_size-delta, 4)
+            next.stack.tweak_back_u256(in_offset+delta, 3)
+
+        next.sub_index = 2
+        return next
+
+    # part 2: gas stipend
+    if part == 2:
+        gas = next.stack.back_u256(0)
+        value = next.stack.back_u256(2)
+        # None-zero value transfers get a stipend
+
+        if value != uint256(0):
+            gas += CALL_STIPEND
+
+        next.stack.tweak_back_u256(gas, 0)
+        next.sub_index = 3
+        return next
+
+    # part 3: Fail if we're trying to execute above the call depth limit
+    if part == 3:
+        if last.call_depth > CALL_CREATE_DEPTH:
+            next.exec_mode = ExecMode.ErrDepth.value
+            return next
+
+    # Part 4: TODO: read balance of the current contract/account
+
+    # Part 5: Fail if we're trying to transfer more than the available balance
+    if part == 5:
+        value = next.stack.back_u256(2)
+        if value > 0:
+            # TODO: read earlier retrieved balance
+            amount = 123
+            if amount < value:
+                next.exec_mode = ExecMode.ErrInsufficientBalance.value
+                return next
+        next.sub_index = 6
+        return next
+
+    # Part 6: Check if account exists, and not a precompile
+    if part == 6:
+        # TODO: check if it exists
+        addr = Address.from_b32(last.stack.back_b32(1))
+        value = next.stack.back_u256(2)
+
+        # TODO: if it does not exist:
+        #  - don't run the call if 0 value and not a precompile
+        #  - create account otherwise
+
+        next.sub_index = 7
+        return next
+
+    # Part 7: transfer value from caller to receiver address
+    if part == 7:
+        addr = last.code_addr
+        # TODO: probably need to split up the transfer in read+write, twice
+        next.sub_index = 8
+        return next
+
+    if part == 8:
+        # TODO: check if precompile, continue with 9 or 10
+        next.sub_index = 9
+        return next
+
+    if part == 9:
+        # running a precompile
+        # TODO steps
+        next.sub_index = 12
+        return next
+
+    if part == 10:
+        # running a regular contract, first retrieve the code
+        next.sub_index = 11
+        # TODO: load code hash from account
+        # TODO: verify code witness with code hash
+        return next
+
+    if part == 11:
+        next.sub_index = 12
+        # if 0 length code, just don't run anything
+        if len(last.code) != 0:
+            next.to = Address.from_b32(last.stack.back_b32(1))
+            next.gas = next.stack.back_u256(0)
+            next.exec_mode = ExecMode.CallPre
+            next.return_to_step = trac.length() - 1
+        return next
+
+    if part == 12:
+        # TODO when the call returns, check its result
+        # if it is a REVERT, then we need to consume all gas
+        # TODO: make sure the return data and state-root are preserved (execmode call post)
+        # TODO: call-post also returns gas
+
+        # TODO: depending on call result, push 0 or 1 to the stack
+
+        # and reset the sub-index
+        next.sub_index = 0
+        # continue with next opcode now that the call is done
+        return progress(next)
+
+    raise Exception("out of bounds call step")
 
 
 def op_call_code(trac: StepsTrace) -> Step:
@@ -726,15 +863,17 @@ def op_static_call(trac: StepsTrace) -> Step:
 def op_return(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    # TODO implement return-data from memory copy
+    next.exec_mode = ExecMode.CallPost.value
+    return next
 
 
 def op_revert(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    # TODO implement return-data from memory copy
+    next.exec_mode = ExecMode.ErrExecutionReverted.value
+    return next
 
 
 def op_stop(trac: StepsTrace) -> Step:

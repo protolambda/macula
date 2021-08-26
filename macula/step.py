@@ -7,6 +7,10 @@ class Address(ByteVector[20]):
     def to_b32(self) -> Bytes32:
         return Bytes32(bytes(self).rjust(32))
 
+    @staticmethod
+    def from_b32(v: Bytes32) -> "Address":
+        return Address(v[:20])
+
 
 class BlockHistory(Vector[Bytes32, 256]):
     pass

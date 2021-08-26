@@ -73,6 +73,7 @@ class Config(object):
         call_depth = last.call_depth
         next.call_depth = call_depth + 1
         # reset return data, stack, memory, PC, and more
+        # The caller must set the input-data and code.
         next.ret_data = ReturnData()
         next.stack = Stack()
         next.memory = Memory()
@@ -236,7 +237,19 @@ class Config(object):
         # Stops execution
         #
         # Any error should follow up with running call-post processing
+        last = trac.last()
+        next = last.copy()
+        # if not a natural revert, then consume all gas.
+        if last.exec_mode != ExecMode.ErrExecutionReverted.value:
+            next.gas = 0
+
+        # TODO: if a revert, then complete the call (without preserving state-root),
+        #  preserve consumed gas, and return data
+
+        # TODO: if not a revert, but an actual error,
+        #  then halt the interpreter and mark the tx as failed.
         raise NotImplementedError
+
 
 def to_word_size(size: uint64) -> uint64:
     if size > (((1 << 64) - 1) - 31):
