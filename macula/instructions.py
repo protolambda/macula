@@ -820,7 +820,7 @@ def op_call(trac: StepsTrace) -> Step:
             next.to = Address.from_b32(last.stack.back_b32(1))
             next.gas = next.stack.back_u256(0)
             next.exec_mode = ExecMode.CallPre
-            next.return_to_step = trac.length() - 1
+            next.return_to_step = last.hash_tree_root()
         return next
 
     if part == 12:

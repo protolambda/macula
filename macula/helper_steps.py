@@ -26,12 +26,11 @@ class StateDB(Protocol):
     #   and a "handle" phase to process the state work.
     def setup_create_account(self, trac: StepsTrace, address: Address) -> Step:
         last = trac.last()
-        step_index = trac.length() - 1
         next = last.copy()
         next.sub_data[0] = 0x01  # create account
         next.sub_data[1] = address.to_b32()
         next.exec_mode = ExecMode.StateDB.value
-        next.return_to_step = step_index
+        next.return_to_step = last.hash_tree_root()
         return next
 
     def handle_create_account(self, trac: StepsTrace) -> Step:

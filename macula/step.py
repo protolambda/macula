@@ -235,7 +235,7 @@ class Step(Container):
     # sub-computations need a place to track their inner state
     sub_data: SubData
     # When doing a return, continue with the operations after this step.
-    return_to_step: uint64
+    return_to_step: Bytes32
 
     # StateDB scope
     # ------------------
@@ -255,8 +255,8 @@ class Step(Container):
     # after finishing the mode, continue with this next mode.
     mpt_mode_on_finish: uint8
 
-    # the step index that has step.mpt_value that represents the parent of the current node
-    mpt_parent_node_step: uint64
+    # the step that has step.mpt_value that represents the parent of the current node
+    mpt_parent_node_step: Bytes32
 
     # hash of the current node (to expand or to bubble up)
     mpt_current_root: ByteList[32]  # max 32 bytes. Smaller values than 32 are not hashed.
