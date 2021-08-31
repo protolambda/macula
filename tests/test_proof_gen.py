@@ -2,25 +2,39 @@ from typing import Dict, List, Optional
 from macula.opcodes import OpCode
 from macula.trace import StepsTrace, MPT
 from macula.step import Address, Bytes32, Step
-from macula.mpt_proof_trace import rlp_encode_list
-
-def eth_sha3() -> Bytes32:
-    return Bytes32()  # TODO
+from macula.util import rlp_encode_list, keccak_256
+from macula.exec_mode import ExecMode, exec_mode_err_range
+from macula.interpreter import next_step
+from ethereum.trie import Trie
+from ethereum.db import EphemDB
 
 
 def compile_test_ops(ops: list) -> bytes:
     return bytes(map(lambda x: int(x.value) if isinstance(x, OpCode) else int(x), ops))
 
 
-class TestMPT(MPT):  # TODO, wrap a MPT python lib for testing
-    def get_node(self, key: bytes) -> bytes: ...
+class TestMPT(MPT):
+    trie: Trie
+
+    def __init__(self):
+        self.trie = Trie(EphemDB())
+
+    def get_node(self, key: bytes) -> bytes:
+        db: EphemDB = self.trie.db
+        return db.get(key)
+
     # note: key is computed as hash of the raw value (an RLP encoded MPT node)
-    def put_node(self, raw: bytes) -> None: ...
+    def put_node(self, raw: bytes) -> None:
+        key = keccak_256(raw)  # key of the MPT node, not a path
+        db: EphemDB = self.trie.db
+        return db.put(key, raw)
 
     def mpt_root(self) -> Bytes32:
-        return Bytes32()
+        return self.trie.root_hash
 
-    def insert(self, key: bytes, value: bytes): ...  # creates new nodes from root to value at key
+    # creates new nodes from root to value at key
+    def insert(self, key: bytes, value: bytes):
+        self.trie.update(key, value)
 
 
 class TestTrace(StepsTrace):
@@ -51,7 +65,7 @@ class TestTrace(StepsTrace):
         return self.codes[code_hash]
 
     def code_store(self, code: bytes) -> None:
-        key = eth_sha3(code)
+        key = keccak_256(code)
         self.codes[key] = code
 
     def last(self) -> Step:
@@ -64,15 +78,15 @@ class TestTrace(StepsTrace):
 
     def add_step(self, step: Step) -> None:
         self.steps.append(step)
-        self.steps[step.hash_tree_root()] = step
+        self.steps_by_root[step.hash_tree_root()] = step
 
     def inject_acct(self, address: Address, nonce: int = 0, balance: int = 0,
                     code: bytes = b"", storage: Optional[TestMPT] = None):
-        mpt_key = eth_sha3(address)
+        mpt_key = keccak_256(address)
         storage_root = b""
         if storage is not None:
             storage_root = storage.mpt_root()
-        code_hash = eth_sha3(code)
+        code_hash = keccak_256(code)
         acc_rlp_li = [nonce, balance, storage_root, code_hash]
         acc_rlp = rlp_encode_list(acc_rlp_li)
         self.world_mpt.insert(mpt_key, acc_rlp)
@@ -92,4 +106,38 @@ def test_execute():
     ]
     code = compile_test_ops(ops)
     print("code", code.hex())
+    trac = TestTrace()
+    step = Step()
+    step.code = code
+    step.exec_mode = ExecMode.CallPre.value
+    trac.add_step(step)
+
+    while True:
+        next = next_step(trac)
+        trac.add_step(next)
+
+        mode = trac.last().exec_mode
+        if exec_mode_err_range[0] <= mode <= exec_mode_err_range[1]:
+            raise Exception("unexpected error")
+        if mode == ExecMode.CallPost.value:
+            break
+
+    for i, step in enumerate(trac.steps):
+        print(f"step {i}: {step.hash_tree_root()} [{ExecMode(step.exec_mode)}]")
+
+
+def test_execute_contract():
+    foobar_storage = TestMPT()
+    foobar_storage.insert(b"\x00" * 31 + b"\x00", b"\xcd" * 32)
+    foobar_storage.insert(b"\x00" * 31 + b"\x01", b"\xef" * 32)
+    # TODO: contract code
+    foobar_code = compile_test_ops([OpCode.PUSH1, 1])
+    foobar_addr = Address(b"\xab"*20)
+
+    trac = TestTrace()
+    trac.inject_acct(address=foobar_addr, nonce=0, balance=42 * 1e9, code=foobar_code, storage=foobar_storage)
+
+    # TODO: create transaction that calls foobar contract
+    # TODO: load transaction into first step
+    # TODO: run interpreter
 

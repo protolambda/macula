@@ -1,6 +1,7 @@
 from .trace import StepsTrace, Processor, MPT
 from .step import *
 from enum import Enum
+from .util import keccak_256, rlp_encode_list, rlp_decode_list
 
 
 class MPTAccessMode(Enum):
@@ -23,16 +24,8 @@ class MPTAccessMode(Enum):
     GRAFTING_B_continuing_child = 5
 
 
-def rlp_decode_list(data: bytes) -> list:
-    return []  # TODO
-
-
-def rlp_encode_list(items: list) -> bytes:
-    return b""  # TODO
-
-
 def mpt_hash(data: bytes) -> Bytes32:
-    return Bytes32()  # TODO
+    return keccak_256(data)
 
 
 BLANK_NODE = b""  # TODO: empty node doesn't have special RLP encoding, does it?

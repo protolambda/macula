@@ -1,0 +1,10 @@
+
+GAS_QUICK_STEP = 2
+GAS_FASTEST_STEP = 3
+GAS_FAST_STEP = 5
+GAS_MID_STEP = 8
+GAS_SLOW_STEP = 10
+GAS_EXT_STEP = 20
+
+# TODO: call gas computation
+
