@@ -5,18 +5,24 @@ from .gas import *
 from .gas_table import *
 from .memory_table import *
 
-MemoryCalculator = Callable[[Stack], Tuple[uint64, bool]]
+# Gas calculation is complex, and requires its own (multi)step processing.
+# The requested memory size as a uint64 is embedded in the first step when entering this processor pipeline.
+# The processor should return the ExecMode to the next interpreter mode (UpdateMemorySize), or an error mode.
+GasFunc = Processor
+
+# memorySizeFunc returns the required size, and whether the operation overflowed a uint64
+MemorySizeFunc = Callable[[Stack], Tuple[uint64, bool]]
 
 
 class Operation(object):
     proc: Processor
     constant_gas: uint64
     # dynamic gas has its whole own step to produce
-    dynamic_gas: Optional[Processor]
+    dynamic_gas: Optional[GasFunc]
     min_stack: uint64
     max_stack: uint64
     # stack -> size, overflow flag
-    memory_size: Optional[MemoryCalculator]
+    memory_size: Optional[MemorySizeFunc]
 
     def __init__(self,
                  proc: Processor,
@@ -175,7 +181,7 @@ FRONTIER = {
     ),
     OpCode.SHA3: Operation(
         proc=op_sha3,
-        constant_gas=params.Sha3Gas,
+        constant_gas=SHA3GAS,
         dynamic_gas=gas_sha3,
         min_stack=min_stack(2, 1),
         max_stack=max_stack(2, 1),
@@ -189,7 +195,7 @@ FRONTIER = {
     ),
     OpCode.BALANCE: Operation(
         proc=op_balance,
-        constant_gas=params.BalanceGasFrontier,
+        constant_gas=BALANCE_GAS_FRONTIER,
         min_stack=min_stack(1, 1),
         max_stack=max_stack(1, 1),
     ),
@@ -253,13 +259,13 @@ FRONTIER = {
     ),
     OpCode.EXTCODESIZE: Operation(
         proc=op_ext_code_size,
-        constant_gas=params.ExtcodeSizeGasFrontier,
+        constant_gas=EXTCODE_SIZE_GAS_FRONTIER,
         min_stack=min_stack(1, 1),
         max_stack=max_stack(1, 1),
     ),
     OpCode.EXTCODECOPY: Operation(
         proc=op_ext_code_copy,
-        constant_gas=params.ExtcodeCopyBaseFrontier,
+        constant_gas=EXTCODE_COPY_BASE_FRONTIER,
         dynamic_gas=gas_ext_code_copy,
         min_stack=min_stack(4, 0),
         max_stack=max_stack(4, 0),
@@ -333,7 +339,7 @@ FRONTIER = {
     ),
     OpCode.SLOAD: Operation(
         proc=op_sload,
-        constant_gas=params.SloadGasFrontier,
+        constant_gas=SLOAD_GAS_FRONTIER,
         min_stack=min_stack(1, 1),
         max_stack=max_stack(1, 1),
     ),
@@ -352,7 +358,7 @@ FRONTIER = {
         # jumps=true,
     ),
     OpCode.JUMPI: Operation(
-        proc=op_jumpi,
+        proc=op_jump_i,
         constant_gas=GAS_SLOW_STEP,
         min_stack=min_stack(2, 0),
         max_stack=max_stack(2, 0),
@@ -378,7 +384,7 @@ FRONTIER = {
     ),
     OpCode.JUMPDEST: Operation(
         proc=op_jump_dest,
-        constant_gas=params.JumpdestGas,
+        constant_gas=JUMPDEST_GAS,
         min_stack=min_stack(0, 0),
         max_stack=max_stack(0, 0),
     ),
@@ -808,7 +814,7 @@ FRONTIER = {
     ),
     OpCode.CREATE: Operation(
         proc=op_create,
-        constant_gas=params.CreateGas,
+        constant_gas=CREATE_GAS,
         dynamic_gas=gas_create,
         min_stack=min_stack(3, 1),
         max_stack=max_stack(3, 1),
@@ -818,7 +824,7 @@ FRONTIER = {
     ),
     OpCode.CALL: Operation(
         proc=op_call,
-        constant_gas=params.CallGasFrontier,
+        constant_gas=CALL_GAS_FRONTIER,
         dynamic_gas=gas_call,
         min_stack=min_stack(7, 1),
         max_stack=max_stack(7, 1),
@@ -826,8 +832,8 @@ FRONTIER = {
         # returns=true,
     ),
     OpCode.CALLCODE: Operation(
-        proc=op_callCode,
-        constant_gas=params.CallGasFrontier,
+        proc=op_call_code,
+        constant_gas=CALL_GAS_FRONTIER,
         dynamic_gas=gas_call_code,
         min_stack=min_stack(7, 1),
         max_stack=max_stack(7, 1),
@@ -857,7 +863,7 @@ HOMESTEAD = {
     OpCode.DELEGATECALL: Operation(
         proc=op_delegate_call,
         dynamic_gas=gas_delegate_call,
-        constant_gas=params.CallGasFrontier,
+        constant_gas=CALL_GAS_FRONTIER,
         min_stack=min_stack(6, 1),
         max_stack=max_stack(6, 1),
         memory_size=memory_delegate_call,
