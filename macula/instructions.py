@@ -3,11 +3,13 @@ from .step import *
 from .exec_mode import *
 from .params import *
 
+
 def progress(step: Step) -> Step:
     # progress to the next opcode. Common between a lot of opcode steps
     step.pc += 1
     step.exec_mode = ExecMode.OpcodeLoad.value
     return step
+
 
 def op_add(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -18,6 +20,7 @@ def op_add(trac: StepsTrace) -> Step:
     next.stack.tweak_u256(x+y)
     return progress(next)
 
+
 def op_sub(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
@@ -25,12 +28,22 @@ def op_sub(trac: StepsTrace) -> Step:
     next.stack.tweak_u256(x-y)
     return progress(next)
 
+
+def op_mul(trac: StepsTrace) -> Step:
+    last = trac.last()
+    next = last.copy()
+    x, y = next.stack.pop_u256(), next.stack.peek_u256()
+    next.stack.tweak_u256(x*y)
+    return progress(next)
+
+
 def op_div(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     x, y = next.stack.pop_u256(), next.stack.peek_u256()
     next.stack.tweak_u256(x // y)
     return progress(next)
+
 
 # SDiv interprets x and y as two's complement signed integers,
 # does a signed division on the two operands and sets z to the result.
@@ -54,12 +67,14 @@ def op_sdiv(trac: StepsTrace) -> Step:
     next.stack.tweak_u256(z)
     return progress(next)
 
-def op_mul(trac: StepsTrace) -> Step:
+
+def op_mod(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     x, y = next.stack.pop_u256(), next.stack.peek_u256()
-    next.stack.tweak_u256(x*y)
+    next.stack.tweak_u256(x % y)
     return progress(next)
+
 
 # SMod interprets x and y as two's complement signed integers,
 # sets z to (sign x) * { abs(x) modulus abs(y) }
@@ -82,6 +97,7 @@ def op_smod(trac: StepsTrace) -> Step:
     next.stack.tweak_u256(z)
     return progress(next)
 
+
 def op_exp(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
@@ -90,8 +106,10 @@ def op_exp(trac: StepsTrace) -> Step:
     next.stack.tweak_u256(z)
     return progress(next)
 
+
 def op_sign_extend(trac: StepsTrace) -> Step:
     raise NotImplementedError
+
 
 def op_not(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -100,6 +118,7 @@ def op_not(trac: StepsTrace) -> Step:
     x ^= (1 << 256)-1
     next.stack.tweak_u256(x)
     return progress(next)
+
 
 def op_lt(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -111,6 +130,7 @@ def op_lt(trac: StepsTrace) -> Step:
         y = 0
     next.stack.tweak_u256(y)
     return progress(next)
+
 
 def op_gt(trac: StepsTrace) -> Step:
     last = trac.last()
@@ -668,14 +688,14 @@ def op_pc(trac: StepsTrace) -> Step:
     return progress(next)
 
 
-def op_memsize(trac: StepsTrace) -> Step:
+def op_msize(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     next.stack.push_u256(uint256(len(last.memory)))
     return progress(next)
 
 
-def op_memsize(trac: StepsTrace) -> Step:
+def op_gas(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     next.stack.push_u256(uint256(last.gas))
