@@ -202,33 +202,28 @@ def exec_update_memory_size(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     memory_size = last.memory_desired
-    if memory_size > 0:
-        m_length = len(next.memory)
-        if m_length >= memory_size:
-            # no extension to do
-            next.exec_mode = ExecMode.OpcodeRun.value
-            return next
-        # If we can efficiently add 32 bytes of memory, go for it.
-        # Otherwise just align by adding a byte, or finishing trailing non-aligning bytes.
-        if (memory_size-m_length > 32) and (m_length % 32 == 0):
-            memory_size += 32
-            next.memory.append_zero_32_bytes()
-        else:
-            memory_size += 1
-            next.memory.append(uint8(0))
-        # update desired memory
-        next.memory_desired = memory_size
-        # check if we can exit the memory extension step repeat already
-        if len(next.memory) >= memory_size:
-            # no extension to do
-            next.exec_mode = ExecMode.OpcodeRun.value
-            return next
-        else:
-            # leave the execution mode on ExecMode.UpdateMemorySize.
-            # The next step will further extend the memory size.
-            return next
-    else:
+    m_length = len(next.memory)
+    if m_length >= memory_size:
+        # no extension to do
         next.exec_mode = ExecMode.OpcodeRun.value
+        return next
+    # If we can efficiently add 32 bytes of memory, go for it.
+    # Otherwise just align by adding a byte, or finishing trailing non-aligning bytes.
+    if (memory_size-m_length >= 32) and (m_length % 32 == 0):
+        memory_size += 32
+        next.memory.append_zero_32_bytes()
+    else:
+        memory_size += 1
+        next.memory.append(uint8(0))
+
+    # check if we can exit the memory extension step repeat already
+    if len(next.memory) >= memory_size:
+        # no extension to do
+        next.exec_mode = ExecMode.OpcodeRun.value
+        return next
+    else:
+        # leave the execution mode on ExecMode.UpdateMemorySize.
+        # The next step will further extend the memory size.
         return next
 
 

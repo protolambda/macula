@@ -42,6 +42,11 @@ COLD_ACCOUNT_ACCESS_COST_EIP2929 = 2600  # COLD_ACCOUNT_ACCESS_COST
 COLD_SLOAD_COST_EIP2929 = 2100  # COLD_SLOAD_COST
 WARM_STORAGE_READ_COST_EIP2929 = 100  # WARM_STORAGE_READ_COST
 
+TX_DATA_NON_ZERO_GAS_FRONTIER = 68  # Per byte of data attached to a transaction that is not equal to zero. NOTE: Not payable on data of calls between transactions.
+TX_DATA_NON_ZERO_GAS_EIP2028 = 16  # Per byte of non zero data attached to a transaction after EIP 2028 (part in Istanbul)
+TX_ACCESS_LIST_ADDRESS_GAS = 2400  # Per address specified in EIP 2930 access list
+TX_ACCESS_LIST_STORAGE_KEY_GAS = 1900  # Per storage key specified in EIP 2930 access list
+
 # In EIP-2200: Sstore_Reset_Gas was 5000.
 # In EIP-2929: Sstore_Reset_Gas was changed to '5000 - COLD_SLOAD_COST'.
 # In EIP-3529: SSTORE_CLEARS_SCHEDULE is defined as SSTORE_RESET_GAS + ACCESS_LIST_STORAGE_KEY_COST
@@ -63,11 +68,6 @@ CREATE_GAS = 32000  # Once per CREATE operation & contract-creation transaction.
 CREATE2GAS = 32000  # Once per CREATE2 operation
 SELFDESTRUCT_REFUND_GAS = 24000  # Refunded following a selfdestruct operation.
 MEMORY_GAS = 3  # Times the address of the (highest referenced byte in memory + 1). NOTE: referencing happens on read, write and in instructions such as RETURN and CALL.
-
-TX_DATA_NON_ZERO_GAS_FRONTIER = 68  # Per byte of data attached to a transaction that is not equal to zero. NOTE: Not payable on data of calls between transactions.
-TX_DATA_NON_ZERO_GAS_EIP2028 = 16  # Per byte of non zero data attached to a transaction after EIP 2028 (part in Istanbul)
-TX_ACCESS_LIST_ADDRESS_GAS = 2400  # Per address specified in EIP 2930 access list
-TX_ACCESS_LIST_STORAGE_KEY_GAS = 1900  # Per storage key specified in EIP 2930 access list
 
 # These have been changed during the course of the chain
 CALL_GAS_FRONTIER = 40  # Once per CALL operation & message call transaction.

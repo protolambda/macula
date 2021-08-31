@@ -109,22 +109,30 @@ def test_execute():
     trac = TestTrace()
     step = Step()
     step.code = code
+    step.gas = 1000
     step.exec_mode = ExecMode.CallPre.value
     trac.add_step(step)
 
-    while True:
+    SAFETY_LIMIT = 1000
+    i = 0
+    while i < SAFETY_LIMIT:
         next = next_step(trac)
         trac.add_step(next)
 
         mode = trac.last().exec_mode
         if exec_mode_err_range[0] <= mode <= exec_mode_err_range[1]:
-            raise Exception("unexpected error")
+            raise Exception("unexpected error", ExecMode(mode), step)
         if mode == ExecMode.CallPost.value:
             break
+    if i >= SAFETY_LIMIT:
+        raise Exception("stopped interpreter, too many steps, infinite loop?", step)
 
     for i, step in enumerate(trac.steps):
-        print(f"step {i}: {step.hash_tree_root()} [{ExecMode(step.exec_mode)}]")
+        print(f"step {i}: {step.hash_tree_root().hex()} -- {ExecMode(step.exec_mode)}, {OpCode(step.op)}")
+    print("return data:", bytes(trac.last().ret_data).hex())
 
+
+ONE_ETHER = 1_000_000_000_000_000_000
 
 def test_execute_contract():
     foobar_storage = TestMPT()
@@ -135,7 +143,7 @@ def test_execute_contract():
     foobar_addr = Address(b"\xab"*20)
 
     trac = TestTrace()
-    trac.inject_acct(address=foobar_addr, nonce=0, balance=42 * 1e9, code=foobar_code, storage=foobar_storage)
+    trac.inject_acct(address=foobar_addr, nonce=0, balance=42*ONE_ETHER, code=foobar_code, storage=foobar_storage)
 
     # TODO: create transaction that calls foobar contract
     # TODO: load transaction into first step

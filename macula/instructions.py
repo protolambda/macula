@@ -619,7 +619,7 @@ def op_mload(trac: StepsTrace) -> Step:
 def op_mstore(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    m_start, val = next.stack.pop_u256(), next.stack.pop_u256()
+    m_start, val = next.stack.pop_u256(), next.stack.pop_b32()
     next.memory.set_32_bytes(m_start, val)
     return progress(next)
 
