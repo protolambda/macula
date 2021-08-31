@@ -20,4 +20,4 @@ No optimism without color, no proof without optical vision.
 
 ## License
 
-MIT, see [`LICENSE`](./LICENSE) file.
+LGPL v3, see [`LICENSE`](./LICENSE) file. The EVM design is based on the [go-ethereum EVM](https://github.com/ethereum/go-ethereum/tree/master/core/vm).
