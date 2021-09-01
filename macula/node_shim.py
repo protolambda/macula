@@ -51,8 +51,8 @@ class ShimNode(PairNode):
         else:
             yield g*2
         if self._touched_right:
-            if isinstance(self.left, ShimNode):
-                yield from self.left.get_touched_gindices(g*2+1)
+            if isinstance(self.right, ShimNode):
+                yield from self.right.get_touched_gindices(g*2+1)
             else:
                 yield g*2+1
         else:

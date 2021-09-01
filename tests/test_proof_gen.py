@@ -45,18 +45,15 @@ class TestTrace(StepsTrace):
     codes: Dict[Bytes32, bytes]
     steps: List[Step]
 
-    # per step, track which other steps were accessed, and which of the data of those steps was required.
-    witness_tracker: Dict[Root, Dict[Root, Set[Gindex]]]
-
-    steps_by_root: Dict[Root, Step]
+    # per step, track which contents were accessed (may recurse into embedded step)
+    witness_tracker: List[Set[Gindex]]
 
     def __init__(self):
         self.world_mpt = TestMPT()
         self.acc_mpt_dict = dict()
         self.codes = dict()
         self.steps = []
-        self.witness_tracker = dict()
-        self.steps_by_root = dict()
+        self.witness_tracker = []
 
     def world_accounts(self) -> MPT:
         return self.world_mpt
@@ -78,25 +75,14 @@ class TestTrace(StepsTrace):
     def last(self) -> Step:
         if len(self.steps) == 0:
             raise Exception("step trace is empty, first step needs to be initialized still!")
-        step = self.steps[len(self.steps)-1]
-        key = step.hash_tree_root()
-        if key not in self.witness_tracker:
-            self.witness_tracker[key] = {key: set()}
-        return step
-
-    def by_root(self, key: Bytes32) -> Step:
-        last = self.last()
-        last_key = last.hash_tree_root()
-        if key not in self.witness_tracker[last_key]:
-            self.witness_tracker[last_key][key] = set()
-        return self.steps_by_root[key]
+        return self.steps[len(self.steps)-1]
 
     def add_step(self, step: Step) -> None:
         # wraps the internal tree backing, to track which nodes have been touched.
         step.set_backing(ShimNode.shim(step.get_backing()))
 
         self.steps.append(step)
-        self.steps_by_root[step.hash_tree_root()] = step
+        self.witness_tracker.append(set())
 
     def reset_shims(self):
         for step in self.steps:
@@ -105,16 +91,9 @@ class TestTrace(StepsTrace):
 
     def capture_access(self):
         last = self.last()
-        last_key = last.hash_tree_root()
-        gindices_per_step = self.witness_tracker[last_key]
-        if len(gindices_per_step) > 2:
-            raise Exception("no step should ever access witness data of more than the last step + 1 step by root")
-
-        # for each of the keys
-        for key in list(gindices_per_step.keys()):
-            step = self.steps_by_root[key]
-            shim: ShimNode = step.get_backing()
-            gindices_per_step.extend(list(shim.get_touched_gindices(g=1)))
+        shim: ShimNode = last.get_backing()
+        access_list = list(shim.get_touched_gindices(g=1))
+        self.witness_tracker[len(self.witness_tracker-1)].extend(access_list)
 
         # reset shims, next capture will cleanly represent just what was accessed by the last step
         self.reset_shims()

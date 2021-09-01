@@ -145,7 +145,7 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
             # we modify a copy of that node and bubble up the change.
             #
             # we're unwinding back to parent nodes, not on last node.
-            content = trac.by_root(last.mpt_parent_node_step)
+            content = last.mpt_parent_node_step.value()
             next = content.copy()
         elif access == MPTAccessMode.DELETING:
             # have we bubbled up to the top yet?
@@ -160,15 +160,18 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
 
             # similar to writing, after reading from top to bottom,
             # we bubble back to delete the necessary nodes
-            content = trac.by_root(last.mpt_parent_node_step)
+            content = last.mpt_parent_node_step.value()
+            assert content is not None
             next = content.copy()
         elif access == MPTAccessMode.GRAFTING_A:
             # back to the parent after we get the details of the current node to graft with
-            content = trac.by_root(last.mpt_parent_node_step)
+            content = last.mpt_parent_node_step.value()
+            assert content is not None
             next = content.copy()
         elif access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
             # bubble up the graft result after modifying the parent end of our graft
-            content = trac.by_root(last.mpt_parent_node_step)
+            content = last.mpt_parent_node_step.value()
+            assert content is not None
             next = content.copy()
         else:
             raise NotImplementedError
@@ -596,7 +599,8 @@ def next_mpt_step(trac: StepsTrace) -> Step:
         trie = trac.account_storage(last.mpt_address_target)
 
     if mpt_mode == 0:  # returning, back to MPT user
-        caller = trac.by_root(last.return_to_step)
+        caller = last.return_to_step.value()
+        assert caller is not None
         next = caller.copy()
         # remember the value we read
         next.mpt_value = last.mpt_value

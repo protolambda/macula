@@ -82,7 +82,8 @@ def exec_call_pre(trac: StepsTrace) -> Step:
 def exec_call_post(trac: StepsTrace) -> Step:
     # note; call-depth will unwind itself, since we copy it from the caller.
     last = trac.last()
-    caller_step = trac.by_root(last.return_to_step)
+    caller_step = last.return_to_step.value()
+    assert caller_step is not None
     next = caller_step.copy()
     # Next step is a lot like the caller, but we preserve the return data, return unused gas, and preserve the state
     # TODO maybe also track past log events, to reconstruct receipt root for block fraud proof
