@@ -1,10 +1,12 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from macula.opcodes import OpCode
 from macula.trace import StepsTrace, MPT
 from macula.step import Address, Bytes32, Step
 from macula.util import rlp_encode_list, keccak_256
 from macula.exec_mode import ExecMode, exec_mode_err_range
 from macula.interpreter import next_step
+from macula.node_shim import ShimNode
+from remerkleable.tree import Root, Gindex
 from ethereum.trie import Trie
 from ethereum.db import EphemDB
 
@@ -42,13 +44,18 @@ class TestTrace(StepsTrace):
     acc_mpt_dict: Dict[Address, TestMPT]  # only contracts have an entry here
     codes: Dict[Bytes32, bytes]
     steps: List[Step]
-    steps_by_root: Dict[Bytes32, Step]
+
+    # per step, track which other steps were accessed, and which of the data of those steps was required.
+    witness_tracker: Dict[Root, Dict[Root, Set[Gindex]]]
+
+    steps_by_root: Dict[Root, Step]
 
     def __init__(self):
         self.world_mpt = TestMPT()
         self.acc_mpt_dict = dict()
         self.codes = dict()
         self.steps = []
+        self.witness_tracker = dict()
         self.steps_by_root = dict()
 
     def world_accounts(self) -> MPT:
@@ -71,14 +78,46 @@ class TestTrace(StepsTrace):
     def last(self) -> Step:
         if len(self.steps) == 0:
             raise Exception("step trace is empty, first step needs to be initialized still!")
-        return self.steps[len(self.steps)-1]
+        step = self.steps[len(self.steps)-1]
+        key = step.hash_tree_root()
+        if key not in self.witness_tracker:
+            self.witness_tracker[key] = {key: set()}
+        return step
 
     def by_root(self, key: Bytes32) -> Step:
+        last = self.last()
+        last_key = last.hash_tree_root()
+        if key not in self.witness_tracker[last_key]:
+            self.witness_tracker[last_key][key] = set()
         return self.steps_by_root[key]
 
     def add_step(self, step: Step) -> None:
+        # wraps the internal tree backing, to track which nodes have been touched.
+        step.set_backing(ShimNode.shim(step.get_backing()))
+
         self.steps.append(step)
         self.steps_by_root[step.hash_tree_root()] = step
+
+    def reset_shims(self):
+        for step in self.steps:
+            backing: ShimNode = step.get_backing()
+            backing.reset_shim()
+
+    def capture_access(self):
+        last = self.last()
+        last_key = last.hash_tree_root()
+        gindices_per_step = self.witness_tracker[last_key]
+        if len(gindices_per_step) > 2:
+            raise Exception("no step should ever access witness data of more than the last step + 1 step by root")
+
+        # for each of the keys
+        for key in list(gindices_per_step.keys()):
+            step = self.steps_by_root[key]
+            shim: ShimNode = step.get_backing()
+            gindices_per_step.extend(list(shim.get_touched_gindices(g=1)))
+
+        # reset shims, next capture will cleanly represent just what was accessed by the last step
+        self.reset_shims()
 
     def inject_acct(self, address: Address, nonce: int = 0, balance: int = 0,
                     code: bytes = b"", storage: Optional[TestMPT] = None):
