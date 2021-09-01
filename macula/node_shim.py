@@ -9,7 +9,7 @@ class ShimNode(PairNode):
     _touched_right: bool
 
     def __init__(self, left: Node, right: Node):
-        self._touched = False
+        self.reset_shim()
 
         if not left.is_leaf():
             if isinstance(left, ShimNode):

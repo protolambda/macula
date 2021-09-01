@@ -1,7 +1,9 @@
-from remerkleable.complex import Container, Vector, List
+from typing import Optional, BinaryIO, Union as PyUnion, Any
+from remerkleable.complex import Container, Vector, List, Type, TypeVar
 from remerkleable.union import Union
 from remerkleable.byte_arrays import Bytes32, ByteVector, ByteList
 from remerkleable.basic import uint8, uint64, uint256, boolean
+from remerkleable.core import BackedView, View, Node, ViewHook, ObjType
 from .opcodes import OpCode
 
 class Address(ByteVector[20]):
@@ -172,6 +174,64 @@ class SubData(Vector[Bytes32, 1024]):
     pass
 
 
+V = TypeVar('V', bound="View")
+
+
+class Untyped(BackedView):
+
+    @classmethod
+    def coerce_view(cls: Type[V], v: Any) -> V:
+        raise Exception("untyped")
+
+    @classmethod
+    def default_node(cls) -> Node:
+        raise Exception("untyped")
+
+    @classmethod
+    def view_from_backing(cls: Type[V], node: Node, hook: Optional[ViewHook[V]] = None) -> V:
+        raise Exception("untyped")
+
+    @classmethod
+    def is_fixed_byte_length(cls) -> bool:
+        raise Exception("untyped")
+
+    @classmethod
+    def min_byte_length(cls) -> int:
+        raise Exception("untyped")
+
+    @classmethod
+    def max_byte_length(cls) -> int:
+        raise Exception("untyped")
+
+    @classmethod
+    def decode_bytes(cls: Type[V], bytez: bytes) -> V:
+        raise Exception("untyped")
+
+    @classmethod
+    def deserialize(cls: Type[V], stream: BinaryIO, scope: int) -> V:
+        raise Exception("untyped")
+
+    @classmethod
+    def from_obj(cls: Type[V], obj: ObjType) -> V:
+        raise Exception("untyped")
+
+    @classmethod
+    def type_repr(cls) -> str:
+        return "(untyped)"
+
+    def adopt_type(self, typ: Type[V]) -> V:
+        return typ.view_from_backing(self.get_backing(), self._hook)
+
+
+# noinspection PyAbstractClass
+class RecursiveStep(Union[None, Untyped]):
+    def value(self) -> PyUnion[View, None]:
+        val = super(RecursiveStep, self).value()
+        if val is None:
+            return None
+        return val.adopt_type(Step)
+
+
 class Step(Container):
     # Unused in the step itself, but important as output, to claim a state-root,
     # which can then be trusted by the next step.
@@ -236,7 +296,7 @@ class Step(Container):
     # sub-computations need a place to track their inner state
     sub_data: SubData
     # When doing a return, continue with the operations after this step.
-    return_to_step: Union[None, "Step"]
+    return_to_step: RecursiveStep
 
     # StateDB scope
     # ------------------
@@ -257,7 +317,7 @@ class Step(Container):
     mpt_mode_on_finish: uint8
 
     # the step that has step.mpt_value that represents the parent of the current node
-    mpt_parent_node_step: Union[None, "Step"]
+    mpt_parent_node_step: RecursiveStep
 
     # hash of the current node (to expand or to bubble up)
     mpt_current_root: ByteList[32]  # max 32 bytes. Smaller values than 32 are not hashed.

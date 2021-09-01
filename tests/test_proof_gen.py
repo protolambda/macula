@@ -93,7 +93,7 @@ class TestTrace(StepsTrace):
         last = self.last()
         shim: ShimNode = last.get_backing()
         access_list = list(shim.get_touched_gindices(g=1))
-        self.witness_tracker[len(self.witness_tracker-1)].extend(access_list)
+        self.witness_tracker[len(self.witness_tracker)-1].update(access_list)
 
         # reset shims, next capture will cleanly represent just what was accessed by the last step
         self.reset_shims()
@@ -135,6 +135,7 @@ def test_execute():
     i = 0
     while i < SAFETY_LIMIT:
         next = next_step(trac)
+        trac.capture_access()
         trac.add_step(next)
 
         mode = trac.last().exec_mode
@@ -145,8 +146,10 @@ def test_execute():
     if i >= SAFETY_LIMIT:
         raise Exception("stopped interpreter, too many steps, infinite loop?", step)
 
-    for i, step in enumerate(trac.steps):
+    for i, step, access in zip(range(len(trac.steps)), trac.steps, trac.witness_tracker):
         print(f"step {i}: {step.hash_tree_root().hex()} -- {ExecMode(step.exec_mode)}, {OpCode(step.op)}")
+        for gindex in access:
+            print(f"    {bin(gindex)[2:].ljust(20, ' ')}: ", step.get_backing().getter(gindex).merkle_root().hex())
     print("return data:", bytes(trac.last().ret_data).hex())
 
 
