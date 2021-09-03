@@ -335,7 +335,9 @@ class Step(Container):
 
     # When removing branch nodes, and grafting remaining child with parent,
     # track the part of the key to insert between the two. Can be empty.
+    # First nibble is the most significant, like mpt_lookup_key
     mpt_graft_key_segment: uint256
+    # Length in nibbles of the segment
     mpt_graft_key_nibbles: uint64
 
     mpt_value: ByteList[2048]

@@ -219,11 +219,45 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
             terminating, path_u256, path_nibble_len = decode_path(encoded_path)
 
             if access == MPTAccessMode.GRAFTING_A:
-                # TODO: take path, append to grafting path, and bubble up with GRAFTING_B_...
+                # take path (in-between part of the graft), append the child-side of the grafting,
+                # and bubble up with GRAFTING_B_terminating/continuing_child
+                prev_segment = last.mpt_graft_key_segment
+                prev_segment_nibbles = last.mpt_graft_key_nibbles
+                # append the path of the child we're grafting by shifting it to after the graft segment we have so far
+                prev_segment |= path_u256 >> prev_segment_nibbles
+                next.mpt_graft_key_segment = prev_segment
+                next.mpt_graft_key_nibbles = prev_segment_nibbles + path_nibble_len
+                if terminating:
+                    next.mpt_mode = MPTAccessMode.GRAFTING_B_terminating_child
+                else:
+                    next.mpt_mode = MPTAccessMode.GRAFTING_B_continuing_child
+                # and don't forget to propagate the contents we're grafting
+                # (we're going up, back to parent side of graft)
+                next.mpt_current_root = last.mpt_current_root
+
                 return next
             elif access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
-                terminating_child = access == MPTAccessMode.GRAFTING_B_terminating_child
-                # TODO: receive graft path, append to own path, construct as new leaf/extension, bubble up as WRITING
+                terminating_child = (access == MPTAccessMode.GRAFTING_B_terminating_child)
+                # take path, append it to the parent-side of the grafting
+                prev_segment = last.mpt_graft_key_segment
+                prev_segment_nibbles = last.mpt_graft_key_nibbles
+                # append the grafting work to the parent by shifting it to the end of the parent path
+                path_u256 |= prev_segment >> path_nibble_len
+                path_nibble_len += prev_segment_nibbles
+
+                # now we have a new grafted path to the child node we are grafting,
+                # create the node (a leaf or extension) by bubbling it up as a write.
+                new_path_encoded = encode_path(path_u256, path_nibble_len, terminating_child)
+                new_content = last.mpt_current_root
+                new_node = [new_path_encoded, new_content]
+                new_node_raw = rlp_encode_list(new_node)
+                new_key = mpt_hash(new_node_raw)
+                next.mpt_current_root = new_key
+                # keep the trie storage up to date with out changes
+                trie.put_node(new_node_raw)
+                # switch to writing, we just need to propagate the one change we made, no further grafting/deletion
+                next.mpt_mode = MPTAccessMode.WRITING
+
                 return next
 
             key_remainder = content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)
