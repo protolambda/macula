@@ -104,12 +104,26 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
     def mpt_step_gen(trac: StepsTrace) -> Step:
         last = trac.last()
 
+        # Note: this MPT code assumes:
+        #  - that values in the MPT tree can have keys with different lengths, like the real MPT spec, unlike e.g. account trie.
+        #  - supports different key lengths, but only < 32 bytes.
+
         # Magic:
         #  - when reading, we take the last step node and traverse deeper with the next step.
-        #  - when writing, we take lookup step that created the current step,
+        #  - when writing, we take the lookup step that created the current step,
         #     and produce a step that bubbles-up changes from the last step.
         #    I.e. writing first does a read from top-to-bottom to learn to trust whatever nodes it's modifying,
         #    then modifies/splits whatever necessary as it bubbles up the change by unwinding.
+        # - when deleting, we read the path from top-to-bottom first as pre-requisite, then change to deletion mode,
+        #   and delete the targeted node.
+        #     - If this leaves a single-node branch, we need to get clean up the connection between the remaining node and the parent
+        #       - If the remaining node is the vt node, we can substitute the branch for this node, by bubbling it up as write.
+        #       - If the remaining node is in 0...16, then it can go deeper, and we need to construct a graft.
+        # - when grafting, we start from the removed branch node.
+        #   - We continue deeper to figure out the child-side of the graft path segment (part A)
+        #   - And then go back to the parent, to insert the child with its new path.
+        #     - If the parent is a leaf/extension kind of node: we connect the paths with its own segment, the new node propagates up as a write.
+        #     - If the parent is a branch node: we insert it as an extension/leaf into the branch slot that referenced the old removed branch.
 
         if access == MPTAccessMode.READING:
             content = last
@@ -161,14 +175,36 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
             # similar to writing, after reading from top to bottom,
             # we bubble back to delete the necessary nodes
             content = last.mpt_parent_node_step.value()
-            assert content is not None
-            next = content.copy()
+            # no next value yet, we don't now if we're going up or down yet (need to go down if starting a graft)
         elif access == MPTAccessMode.GRAFTING_A:
             # back to the parent after we get the details of the current node to graft with
             content = last.mpt_parent_node_step.value()
             assert content is not None
             next = content.copy()
         elif access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
+            # have we bubbled up to the top yet?
+            if last.mpt_lookup_nibble_depth == 0:
+                # if we're grafting at the top, we make the top a leaf/extension node
+                next = last.copy()
+                next.mpt_mode = last.mpt_mode_on_finish
+                path_nibble_len = last.mpt_graft_key_nibbles
+
+                # can only be 0 if it were a vt node, but we turn those in writes, not grafts.
+                assert path_nibble_len > 0
+
+                # top node becomes leaf/extension
+                terminating_child = (access == MPTAccessMode.GRAFTING_B_terminating_child)
+                path_u256 = last.mpt_graft_key_segment
+                new_path_encoded = encode_path(path_u256, path_nibble_len, terminating_child)
+                new_content = last.mpt_current_root
+                new_node = [new_path_encoded, new_content]
+                new_node_raw = rlp_encode_list(new_node)
+                new_key = mpt_hash(new_node_raw)
+                next.mpt_current_root = new_key
+                # keep the trie storage up to date with our changes
+                trie.put_node(new_node_raw)
+                return next
+
             # bubble up the graft result after modifying the parent end of our graft
             content = last.mpt_parent_node_step.value()
             assert content is not None
@@ -253,7 +289,7 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                 new_node_raw = rlp_encode_list(new_node)
                 new_key = mpt_hash(new_node_raw)
                 next.mpt_current_root = new_key
-                # keep the trie storage up to date with out changes
+                # keep the trie storage up to date with our changes
                 trie.put_node(new_node_raw)
                 # switch to writing, we just need to propagate the one change we made, no further grafting/deletion
                 next.mpt_mode = MPTAccessMode.WRITING
@@ -284,12 +320,20 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                         new_key = mpt_hash(new_node_raw)
                         next.mpt_current_root = new_key
 
-                        # keep the trie storage up to date with out changes
+                        # keep the trie storage up to date with our changes
                         trie.put_node(new_node_raw)
 
                         # stay in the same MPT mode, this is a new mpt_current_root to bubble up
                         return next
                     elif access == MPTAccessMode.DELETING:
+                        # It must be a leaf we are deleting:
+                        # An extension leads to a branch, and a branch has multiple nodes.
+                        # We only delete one of those at a time,
+                        # so the other gets grafted to the extension before it would get deleted.
+                        assert terminating
+                        # Bubbling up.
+                        assert content is not None
+                        next = content.copy()
                         # delete the node altogether,
                         # and bubble up to delete any other nodes that would otherwise reference it as last thing.
                         trie.put_node(BLANK_NODE)
@@ -532,8 +576,28 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
                         if remaining_count == 0:
                             # MPT was invalid, a branch node with only a vt node should not exist
                             raise Exception("invalid MPT")
-                        # TODO: grafting work
+                        # get the remaining node
+                        remaining_index = [node != b"" for node in data_li].index(True)
+                        assert remaining_index != 16
+                        remaining_node = data_li[remaining_index]
+
+                        # visit the remaining node
+                        next.mpt_current_root = remaining_node
+
+                        # after first visiting the grafted child,
+                        # immediately go to the parent (we removed this intermediate branch)
+                        next.mpt_parent_node_step = content.mpt_parent_node_step
+
+                        next.mpt_graft_key_segment = uint256(remaining_index)
+                        next.mpt_graft_key_nibbles = 1
+
+                        # we need to add the nibble it was located by, and the remaining node may have a deeper path.
+                        # so we continue in grafting mode, and visit the child first.
+                        next.mpt_mode = MPTAccessMode.GRAFTING_A.value
                     else:
+                        # Bubbling up.
+                        assert content is not None
+                        next = content.copy()
                         # more than 1 node remaining in the branch, we can just empty the vt slot
                         # and bubble up the change as a write-operation.
                         data_li[16] = BLANK_NODE
@@ -572,9 +636,42 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
 
                 # stay in the same MPT mode, this is a new mpt_current_root to bubble up
                 return next
+            elif access == MPTAccessMode.GRAFTING_A:
+                # A branch node has no leading path,
+                # we can just continue to step B of grafting, the graft-path stays the same,
+                # and this branch node is grafted to the parent of the branch we omitted.
+                next.mpt_graft_key_segment = last.mpt_graft_key_segment
+                next.mpt_graft_key_nibbles = last.mpt_graft_key_nibbles
+                next.mpt_mode = MPTAccessMode.GRAFTING_B_continuing_child  # a branch node is never terminating
+                return next
+
             elif access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
                 # just like writing, except we need a new leaf/extension node to embed the graft path
-                # TODO
+
+                # create leaf/extension node
+                terminating_child = (access == MPTAccessMode.GRAFTING_B_terminating_child)
+                # take path, append it to the parent-side of the grafting
+                graft_path = last.mpt_graft_key_segment
+                graft_path_nibbles = last.mpt_graft_key_nibbles
+                # can only be 0 if it were a vt node, but we turn those in writes, not grafts.
+                assert graft_path_nibbles > 0
+                new_path_encoded = encode_path(graft_path, graft_path_nibbles, terminating_child)
+                new_content = last.mpt_current_root
+                new_node = [new_path_encoded, new_content]
+                new_node_raw = rlp_encode_list(new_node)
+                new_key = mpt_hash(new_node_raw)
+
+                # write the new node into the place of the old branch
+                data_li[branch_lookup_nibble] = new_key
+
+                # and bubble up the updated branch
+                branch_raw = rlp_encode_list(data_li)
+                trie.put_node(branch_raw)
+                branch_root = mpt_hash(branch_raw)
+                next.mpt_current_root = branch_root
+
+                # switch to writing, we just need to propagate the one change we made, no further grafting/deletion
+                next.mpt_mode = MPTAccessMode.WRITING
                 return next
             elif access == MPTAccessMode.DELETING:
                 # if we entered a branch node on the path to our node, but didn't reach our node,
@@ -591,20 +688,48 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
 
                     # Remember the path to insert between the parent node and the remaining leaf node
                     remaining_index = [node != b"" for node in data_li].index(True)
+
+                    remaining_node = data_li[remaining_index]
+
                     if remaining_index == 16:
-                        next.mpt_graft_key_segment = 0
-                        next.mpt_graft_key_nibbles = 0
+                        # Nothing to append, we can just put vt in the old spot of the current branch node
+                        # So we go upwards.
+
+                        assert content is not None
+                        next = content.copy()
+
+                        # write the remaining node
+                        next.mpt_current_root = remaining_node
+
+                        # Remaining node has no prefix (vt cannot be a leaf/extension node),
+                        # So we can just substitute the branch node with the vt node by continuing in writing mode
+                        next.mpt_mode = MPTAccessMode.WRITING
+
+                        return next
                     else:
+                        # first need to visit child side of graft, create a new step
+                        next = last.copy()
+
+                        # visit the remaining node
+                        next.mpt_current_root = remaining_node
+
+                        # after first visiting the grafted child,
+                        # immediately go to the parent (we removed this intermediate branch)
+                        next.mpt_parent_node_step = content.mpt_parent_node_step
+
                         next.mpt_graft_key_segment = uint256(remaining_index)
                         next.mpt_graft_key_nibbles = 1
-                    remaining_node = data_li[remaining_index]
-                    next.mpt_current_root = remaining_node
-                    next.mpt_mode = MPTAccessMode.GRAFTING_A.value
-                    # after first visiting the grafted child,
-                    # immediately go to the parent (we removed this intermediate branch)
-                    next.mpt_parent_node_step = content.mpt_parent_node_step
-                    return next
+
+                        # we need to add the nibble it was located by, and the remaining node may have a deeper path.
+                        # so we continue in grafting mode, and visit the child first.
+                        next.mpt_mode = MPTAccessMode.GRAFTING_A.value
+
+                        return next
                 else:
+                    # Bubbling up.
+                    assert content is not None
+                    next = content.copy()
+
                     # more than 1 node remaining in the branch, we can just empty our slot
                     # and bubble up the change as a write-operation.
                     data_li[branch_lookup_nibble] = BLANK_NODE
