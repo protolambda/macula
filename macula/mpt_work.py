@@ -107,6 +107,14 @@ def rlp_encode_node(items: list) -> bytes:
         return (0xbf + ll).to_bytes(length=1, byteorder='big') + l.to_bytes(length=ll, byteorder='big') + data
 
 
+class MPTTreeSource(Enum):
+    WORLD_ACCOUNTS = 0x00
+    ACCOUNT_STORAGE = 0x01
+    # TODO: we could also interface with transactions and receipts once we implement block-fraud-proofs.
+    TRANSACTIONS = 0x02
+    RECEIPTS = 0x03
+
+
 class MPTAccessMode(Enum):
     # top to bottom tree traversal, get value by key, starting from the given MPT root
     READING = 0x00
@@ -873,15 +881,19 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
 
 
 # TODO: init claim with mpt_current_root set to state-root (or account storage root)
-def next_mpt_step(trac: StepsTrace) -> Step:
+def mpt_work_proc(trac: StepsTrace) -> Step:
     last = trac.last()
     mpt_mode = MPTAccessMode(last.mpt_mode.value)
 
-    # TODO: define flag to switch between global/account work
-    if last.mpt_global:
+    trie_src = MPTTreeSource(last.mpt_tree_source)
+    if trie_src == MPTTreeSource.WORLD_ACCOUNTS:
         trie = trac.world_accounts()
+    elif trie_src == MPTTreeSource.ACCOUNT_STORAGE:
+        addr = Address.from_b32(last.mpt_start_reference)
+        trie = trac.account_storage(addr)
     else:
-        trie = trac.account_storage(last.mpt_address_target)
+        # TODO: support transactions and receipts
+        raise NotImplementedError
 
     if mpt_mode.value <= 5:  # all internal tree operation modes
         return mpt_step_with_trie(last, trie)

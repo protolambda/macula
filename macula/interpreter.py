@@ -2,6 +2,8 @@ from .trace import StepsTrace
 from .step import *
 from .exec_mode import *
 from .jump_table import Operation, FRONTIER
+from .state_work import state_work_proc
+from .mpt_work import mpt_work_proc
 
 
 class Rules(object):
@@ -33,6 +35,11 @@ def next_step(trac: StepsTrace) -> Step:
         raise NotImplementedError
     if mode == ExecMode.TxFeesPost:  # TODO: charge tx fees
         raise NotImplementedError
+
+    if mode == ExecMode.StateWork:
+        return state_work_proc(trac)
+    if mode == ExecMode.MPTWork:
+        return mpt_work_proc(trac)
 
     if mode == ExecMode.CallPre:
         return exec_call_pre(trac)

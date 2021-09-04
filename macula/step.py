@@ -302,8 +302,14 @@ class Step(Container):
     # On a delete: recurse from top to bottom, delete, propagate deletion, unwind back,
     #  and collapse branch nodes where necessary by grafting the remaining branch child and parent.
 
+    # Instructs which trie to operate on
+    # (for the DB it really doesn't matter, as we access all nodes by the hash of the node contents,
+    #  but to map it to the right API calls on retrieval it's still useful)
+    mpt_tree_source: uint8  # see MPTTreeSource enum
+    mpt_start_reference: Bytes32  # the starting point, to identify e.g. an account
+
     # Instructs how to execute
-    mpt_mode: uint8
+    mpt_mode: uint8  # see MPTAccessMode enum
     # what to write at the mpt_lookup_key, if in writing mode,
     # only used to start writing once done with the reading part.
     mpt_write_root: ByteList[32]

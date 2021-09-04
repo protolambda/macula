@@ -25,6 +25,10 @@ class ExecMode(Enum):
     # when done running, continue with ExecOpcodeLoad. Or any error
     OpcodeRun = 0x28
 
+    # Special state machines
+    StateWork = 0x30
+    MPTWork = 0x31
+
     # Stops execution
     ErrSTOP = 0x40
     ErrStackUnderflow = 0x41
