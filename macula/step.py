@@ -46,16 +46,11 @@ class Memory(List[uint8, 64 << 20]):
 
 
 def uint256_to_b32(v: uint256) -> Bytes32:
-    # encode_bytes returns little-endian, we want big-endian
-    return endian_swap_b32(v.encode_bytes())
+    return v.encode_bytes()  # uint256 is configured to be big-endian in the remerkleable settings
 
 
 def b32_to_uint256(v: Bytes32) -> uint256:
-    return uint256.decode_bytes(endian_swap_b32(v))
-
-
-def endian_swap_b32(v: Bytes32) -> Bytes32:
-    return Bytes32(v[::-1])
+    return uint256.decode_bytes(v)  # uint256 is configured to be big-endian in the remerkleable settings
 
 
 # EVM stack is max 1024 words
@@ -64,7 +59,7 @@ class Stack(List[Bytes32, 1024]):
     def push_b32(self, b: Bytes32) -> None:
         self.append(b)
 
-    def push_u256(self, b: uint256) -> None:  # TODO: hacky, SSZ uses little-endian, EVM uses big-endian
+    def push_u256(self, b: uint256) -> None:
         self.append(uint256_to_b32(b))
 
     def pop_b32(self) -> Bytes32:
