@@ -1,7 +1,112 @@
 from .trace import StepsTrace, Processor, MPT
 from .step import *
 from enum import Enum
-from .util import keccak_256, rlp_encode_list, rlp_decode_list
+from . import keccak_256
+
+
+# Doesn't decode recursively. Returns a list of element bytes (including their RLP length-prefix etc.)
+def rlp_decode_node(data: bytes) -> list:
+    if len(data) == 0:  # empty byte strings are used to represent none-existent nodes
+        return []
+    # generator/verifier just reverts with error if the MPT node data is malformatted
+    first_byte = data[0]
+    if first_byte < 0xc0:
+        # not decoding the bytestring here
+        raise Exception("invalid first byte in RLP data: %d" % first_byte)
+    data = data[1:]  # strip first byte
+    list_length: int  # size of total RLP payload, i.e. everything except the prefix length
+    if first_byte <= 0xf7:
+        list_length = first_byte - 0xc0
+    else:
+        length_of_length = first_byte - 0xf8
+        if len(data) < length_of_length:
+            raise Exception("not enough bytes for list length")
+        list_length = int.from_bytes(data[:length_of_length], byteorder='big')
+        data = data[length_of_length:]
+
+    if list_length != len(data):
+        raise Exception("unexpected list length")
+
+    out = []
+    for i in range(list_length):
+        if len(data) == 0:
+            raise Exception("not enough bytes to read list items")
+        elem_first_byte = data[0]
+        size: int
+        if elem_first_byte <= 0x7f:
+            size = 1
+        elif elem_first_byte <= 0xb7:
+            elem_str_length = elem_first_byte - 0x80
+            size = 1+elem_str_length
+        elif elem_first_byte <= 0xbf:
+            elem_length_of_length = elem_first_byte - 0xb8
+            elem_str_length = int.from_bytes(data[1:1+elem_length_of_length], byteorder='big')
+            size = 1+elem_length_of_length+elem_str_length
+        elif elem_first_byte <= 0xf7:
+            list_payload_length = elem_first_byte - 0xc0
+            size = 1 + list_payload_length
+        else:
+            elem_length_of_length = elem_first_byte - 0xb8
+            list_payload_length = int.from_bytes(data[1:1+elem_length_of_length], byteorder='big')
+            size = 1+elem_length_of_length+list_payload_length
+        out.append(data[:size])
+        data = data[size:]
+
+    if len(out) != 2 and len(out) != 17:
+        raise Exception("unexpected amount of elements in list RLP")
+
+    return out
+
+
+# Strip the length prefix of a RLP string (leaves the bare string) or list (leaves the concatenated RLP payloads).
+def rlp_strip_length_prefix(data: bytes) -> bytes:
+    elem_first_byte = data[0]
+    size: int
+    if elem_first_byte <= 0xb7:
+        return data[1:]
+    elif elem_first_byte <= 0xbf:
+        elem_length_of_length = elem_first_byte - 0xb7
+        return data[1+elem_length_of_length:]
+    elif elem_first_byte <= 0xf7:
+        return data[1:]
+    else:
+        elem_length_of_length = elem_first_byte - 0xb7
+        return data[1+elem_length_of_length:]
+
+
+def int_byte_length(l: int) -> int:
+    ll = 1
+    while l > 0xff:
+        ll += 1
+        l >> 8
+    return ll
+
+
+# Adds the RLP prefix, for strings *only*. NOT RLP-encoded lists.
+def rlp_add_str_length_prefix(data: bytes) -> bytes:
+    if len(data) == 0:
+        return data  # empty string
+    if len(data) == 1 and data[0] <= 0x7f:
+        return data  # single byte, low enough to be encoded as-is
+    if len(data) <= 55:
+        return (0x80 + len(data)).to_bytes(length=1, byteorder='big') + data
+    else:
+        l = len(data)
+        ll = int_byte_length(l)  # figure out byte length of the length
+        return (0xb7 + ll).to_bytes(length=1, byteorder='big') + l.to_bytes(length=ll, byteorder='big') + data
+
+
+# takes a list of RLP-encoded elements, concatenates them, and adds the appropriate list-prefix
+def rlp_encode_node(items: list) -> bytes:
+    if len(items) == 0:
+        return b""
+    data = b''.join(items)
+    if len(data) <= 55:
+        return (0xc0 + len(data)).to_bytes(length=1, byteorder='big') + data
+    else:
+        l = len(data)
+        ll = int_byte_length(l)  # figure out byte length of the length
+        return (0xbf + ll).to_bytes(length=1, byteorder='big') + l.to_bytes(length=ll, byteorder='big') + data
 
 
 class MPTAccessMode(Enum):
@@ -214,12 +319,18 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
         else:
             raise NotImplementedError
 
-        # If not arrived yet, then expand it
-        data = trie.get_node(content.mpt_current_root)
-        # check that the provided MPT node witness data matches the request node root
-        assert mpt_hash(data) == content.mpt_current_root
+        data: bytes
+        if len(content.mpt_current_root) < 32:
+            data = content.mpt_current_root  # the RLP encoded node itself, no DB lookup
+        else:
+            # If not arrived yet, then expand it
+            data = trie.get_node(data)
+            # check that the provided MPT node witness data matches the request node root
+            assert mpt_hash(data) == content.mpt_current_root
 
-        data_li = rlp_decode_list(data)
+        # decode into a list of raw byte strings.
+        # These strings may be 32-byte hashes, or RLP-encoded data if < 32 bytes
+        data_li = rlp_decode_node(data)
         if len(data_li) == 0:
             if access == MPTAccessMode.READING:
                 next.mpt_current_root = Bytes32()
