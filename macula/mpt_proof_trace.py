@@ -61,10 +61,11 @@ def decode_path(encoded_path: bytes) -> (bool, uint256, int):
     terminating = flag_nibble & 0b0010 != 0
     evenlen = flag_nibble & 0b0001 == 0
     assert flag_nibble & 0b1100 == 0
-    path_u256 = uint256(int.from_bytes(encoded_path[1:].ljust(32), byteorder='big'))
+    path_u256 = uint256(int.from_bytes(encoded_path[1:].ljust(32, b'\x00'), byteorder='big'))
     path_nibble_len = len(encoded_path[1:]) * 2
+    assert path_nibble_len <= 64  # = 32 bytes max, or 63 if odd length
     if not evenlen:  # if odd, then the 4 bits "after" (when hex encoded) the flag bits are part of the path
-        assert path_nibble_len < 32
+        assert path_nibble_len < 64
         path_u256 >>= 4
         path_u256 |= uint256(encoded_path[0] & 0x0F) << (256 - 4)
         path_nibble_len += 1

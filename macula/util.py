@@ -11,7 +11,7 @@ import rlp
 
 
 def rlp_decode_list(data: bytes) -> list:
-    return rlp.decode(data)
+    return rlp.decode(data, sedes=rlp.sedes.CountableList(rlp.sedes.Binary(allow_empty=True)))
 
 
 def rlp_encode_list(items: list) -> bytes:
