@@ -100,9 +100,10 @@ def common_nibble_prefix(a: uint256, b: uint256, a_len: int, b_len: int) -> (uin
     return prefix, max_common
 
 
-def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
+def make_mpt_step_gen(trie: MPT) -> Processor:
     def mpt_step_gen(trac: StepsTrace) -> Step:
         last = trac.last()
+        access = MPTAccessMode(int(last.mpt_mode))
 
         # Note: this MPT code assumes:
         #  - that values in the MPT tree can have keys with different lengths, like the real MPT spec, unlike e.g. account trie.
@@ -130,7 +131,7 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
             next = content.copy()
 
             # index of last step becomes the parent of the next step
-            next.mpt_parent_node_step = last.hash_tree_root()
+            next.mpt_parent_node_step.change(selector=1, value=last)
 
             if content.mpt_lookup_key_nibbles == content.mpt_lookup_nibble_depth:  # have we arrived yet?
                 if len(content.mpt_current_root) < 32:
@@ -586,7 +587,7 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
 
                         # after first visiting the grafted child,
                         # immediately go to the parent (we removed this intermediate branch)
-                        next.mpt_parent_node_step = content.mpt_parent_node_step
+                        next.mpt_parent_node_step.change(selector=1, value=content.mpt_parent_node_step.value())
 
                         next.mpt_graft_key_segment = uint256(remaining_index)
                         next.mpt_graft_key_nibbles = 1
@@ -715,7 +716,7 @@ def make_mpt_step_gen(trie: MPT, access: MPTAccessMode) -> Processor:
 
                         # after first visiting the grafted child,
                         # immediately go to the parent (we removed this intermediate branch)
-                        next.mpt_parent_node_step = content.mpt_parent_node_step
+                        next.mpt_parent_node_step.change(selector=1, value=content.mpt_parent_node_step.value())
 
                         next.mpt_graft_key_segment = uint256(remaining_index)
                         next.mpt_graft_key_nibbles = 1

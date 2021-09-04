@@ -177,59 +177,58 @@ class SubData(Vector[Bytes32, 1024]):
 V = TypeVar('V', bound="View")
 
 
-class Untyped(BackedView):
+# Util to make recursive Step data types work. Lazy-loads the step type info on usage.
+class LazyStep(BackedView):
 
     @classmethod
     def coerce_view(cls: Type[V], v: Any) -> V:
-        raise Exception("untyped")
+        return Step.coerce_view(v)
 
     @classmethod
     def default_node(cls) -> Node:
-        raise Exception("untyped")
+        return Step.default_node()
 
     @classmethod
     def view_from_backing(cls: Type[V], node: Node, hook: Optional[ViewHook[V]] = None) -> V:
-        raise Exception("untyped")
+        return Step.view_from_backing(node, hook)
 
     @classmethod
     def is_fixed_byte_length(cls) -> bool:
-        raise Exception("untyped")
+        return False
 
     @classmethod
     def min_byte_length(cls) -> int:
-        raise Exception("untyped")
+        return 0
 
     @classmethod
     def max_byte_length(cls) -> int:
-        raise Exception("untyped")
+        raise Exception("unlimited")
 
     @classmethod
     def decode_bytes(cls: Type[V], bytez: bytes) -> V:
-        raise Exception("untyped")
+        return LazyStep(backing=Step.decode_bytes(bytez).get_backing())
 
     @classmethod
     def deserialize(cls: Type[V], stream: BinaryIO, scope: int) -> V:
-        raise Exception("untyped")
+        return LazyStep(backing=Step.deserialize(stream, scope).get_backing())
 
     @classmethod
     def from_obj(cls: Type[V], obj: ObjType) -> V:
-        raise Exception("untyped")
+        return LazyStep(backing=Step.from_obj(obj).get_backing())
 
     @classmethod
     def type_repr(cls) -> str:
-        return "(untyped)"
-
-    def adopt_type(self, typ: Type[V]) -> V:
-        return typ.view_from_backing(self.get_backing(), self._hook)
+        return "LazyStep"
 
 
 # noinspection PyAbstractClass
-class RecursiveStep(Union[None, Untyped]):
-    def value(self) -> PyUnion[View, None]:
-        val = super(RecursiveStep, self).value()
+class RecursiveStep(Union[None, LazyStep]):
+    def value(self) -> PyUnion[None, View]:
+        val: PyUnion[None, LazyStep] = super(RecursiveStep, self).value()
         if val is None:
             return None
-        return val.adopt_type(Step)
+        else:
+            return Step(backing=val.get_backing(), hook=val._hook)
 
 
 class Step(Container):
