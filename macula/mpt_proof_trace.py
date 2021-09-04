@@ -456,9 +456,9 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                         # it's a leaf, but we'll expand
                         # leaf expand in case it was hashed (>= 32 bytes)
                         # extensions always extend (key can match and point to a branch node that holds the value)
-                        if len(data[1]) >= 32:
+                        if len(data_li[1]) >= 32:
                             # It's a hashed reference, just store the hash instead of the RLP-encoded hash
-                            next.mpt_current_root = rlp_strip_length_prefix(data[1])
+                            next.mpt_current_root = rlp_strip_length_prefix(data_li[1])
                         else:
                             next.mpt_current_root = data_li[1]
                         next.mpt_lookup_nibble_depth = new_depth
@@ -466,7 +466,7 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                         return next
                     elif access == MPTAccessMode.WRITING:
                         # overwrite the old node value, and compute the root to bubble up the change
-                        new_key = new_2_node(data[0], rlp_if_bytes32(last.mpt_current_root))
+                        new_key = new_2_node(data_li[0], rlp_if_bytes32(last.mpt_current_root))
                         next.mpt_current_root = new_key
 
                         # stay in the same MPT mode, this is a new mpt_current_root to bubble up

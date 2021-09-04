@@ -21,14 +21,14 @@ def test_mpt_read():
     # TODO: when nodes are too small, they don't get hashed, and the rlp is just embedded as-is.
     #  But the decoder does recursive decoding, creating a nested list structure,
     #  while we just want to decode the top list only.
-    mpt.insert(b'\x12\x34' + b'\x22'*30, b'\x55\x42\x54\x02')
+    mpt.insert(b'\x12\x34' + b'\x00'*30, b'\x55\x42\x54\x02')
     mpt.insert(b'\x12\x28' + b'\x22'*30, b'\x56\x42\x02\x44\x55')
     root = mpt.trie.root_hash
     step = Step(
         mpt_mode=MPTAccessMode.READING.value,
         mpt_current_root=root,
         mpt_lookup_key=uint256(0x1234 << (256 - 4*4)),
-        mpt_lookup_key_nibbles=4,
+        mpt_lookup_key_nibbles=64,
         mpt_lookup_nibble_depth=0,
         mpt_mode_on_finish=0xff,
     )
@@ -37,6 +37,10 @@ def test_mpt_read():
     for i in range(512):
         if step.mpt_mode == 0xff:
             print("done!")
+            if step.mpt_fail_lookup == 0:
+                print("success! rlp value: %s" % step.mpt_value.hex())
+            else:
+                print("value not found, reason: %d" % step.mpt_fail_lookup)
             return
 
         trac = SingleStepTrace(step)
