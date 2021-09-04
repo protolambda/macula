@@ -17,10 +17,6 @@ class SingleStepTrace(StepsTrace):
 
 def test_mpt_read():
     mpt = TestMPT()
-    # TODO: trie lib seems to read these key bytes from RtoL instead LtoR
-    # TODO: when nodes are too small, they don't get hashed, and the rlp is just embedded as-is.
-    #  But the decoder does recursive decoding, creating a nested list structure,
-    #  while we just want to decode the top list only.
     mpt.insert(b'\x12\x34' + b'\x00'*30, b'\x55\x42\x54\x02')
     mpt.insert(b'\x12\x28' + b'\x22'*30, b'\x56\x42\x02\x44\x55')
     root = mpt.trie.root_hash

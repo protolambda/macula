@@ -9,6 +9,7 @@ from macula.node_shim import ShimNode
 from remerkleable.tree import Root, Gindex
 from ethereum.trie import Trie
 from ethereum.db import EphemDB
+import rlp
 
 
 def compile_test_ops(ops: list) -> bytes:
@@ -106,7 +107,7 @@ class TestTrace(StepsTrace):
             storage_root = storage.mpt_root()
         code_hash = keccak_256(code)
         acc_rlp_li = [nonce, balance, storage_root, code_hash]
-        acc_rlp = rlp_encode_list(acc_rlp_li)
+        acc_rlp = rlp.encode(acc_rlp_li)
         self.world_mpt.insert(mpt_key, acc_rlp)
         if storage is not None:
             self.acc_mpt_dict[address] = storage
