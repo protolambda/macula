@@ -294,6 +294,8 @@ class Step(Container):
 
     # StateDB scope
     # ------------------
+    # Manages state machine during the StateWork execution mode
+    state_mode = uint8  # see StateWork enum
 
     # MPT scope
     # ------------------
@@ -308,7 +310,7 @@ class Step(Container):
     mpt_tree_source: uint8  # see MPTTreeSource enum
     mpt_start_reference: Bytes32  # the starting point, to identify e.g. an account
 
-    # Instructs how to execute
+    # Manages state machine during the MPTWork execution mode
     mpt_mode: uint8  # see MPTAccessMode enum
     # what to write at the mpt_lookup_key, if in writing mode,
     # only used to start writing once done with the reading part.
