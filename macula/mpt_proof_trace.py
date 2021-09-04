@@ -14,11 +14,11 @@ def rlp_decode_node(data: bytes) -> list:
         # not decoding the bytestring here
         raise Exception("invalid first byte in RLP data: %d" % first_byte)
     data = data[1:]  # strip first byte
-    list_length: int  # size of total RLP payload, i.e. everything except the prefix length
+    list_length: int  # byte size of total RLP payload, i.e. everything except the prefix length
     if first_byte <= 0xf7:
         list_length = first_byte - 0xc0
     else:
-        length_of_length = first_byte - 0xf8
+        length_of_length = first_byte - 0xf7
         if len(data) < length_of_length:
             raise Exception("not enough bytes for list length")
         list_length = int.from_bytes(data[:length_of_length], byteorder='big')
@@ -28,9 +28,7 @@ def rlp_decode_node(data: bytes) -> list:
         raise Exception("unexpected list length")
 
     out = []
-    for i in range(list_length):
-        if len(data) == 0:
-            raise Exception("not enough bytes to read list items")
+    while len(data) > 0:
         elem_first_byte = data[0]
         size: int
         if elem_first_byte <= 0x7f:
@@ -39,14 +37,14 @@ def rlp_decode_node(data: bytes) -> list:
             elem_str_length = elem_first_byte - 0x80
             size = 1+elem_str_length
         elif elem_first_byte <= 0xbf:
-            elem_length_of_length = elem_first_byte - 0xb8
+            elem_length_of_length = elem_first_byte - 0xb7
             elem_str_length = int.from_bytes(data[1:1+elem_length_of_length], byteorder='big')
             size = 1+elem_length_of_length+elem_str_length
         elif elem_first_byte <= 0xf7:
             list_payload_length = elem_first_byte - 0xc0
             size = 1 + list_payload_length
         else:
-            elem_length_of_length = elem_first_byte - 0xb8
+            elem_length_of_length = elem_first_byte - 0xf7
             list_payload_length = int.from_bytes(data[1:1+elem_length_of_length], byteorder='big')
             size = 1+elem_length_of_length+list_payload_length
         out.append(data[:size])
@@ -206,27 +204,43 @@ def common_nibble_prefix(a: uint256, b: uint256, a_len: int, b_len: int) -> (uin
     return prefix, max_common
 
 
+def rlp_if_bytes32(v: bytes) -> bytes:
+    assert len(v) <= 32  # sanity check
+    if len(v) == 32:
+        return rlp_add_str_length_prefix(v)
+    else:
+        return v
+
+
 def make_mpt_step_gen(trie: MPT) -> Processor:
 
-    def new_2_node(path: bytes, content: bytes):
+    def new_2_node(path: bytes, content: bytes, rlp_encode_hash=False):
         # The content must already be RLP encoded (i.e. it's a length prefixed hash or a small RLP structure).
         # The path is not yet RLP encoded.
         rlp_node = rlp_encode_node([rlp_add_str_length_prefix(path), content])
         if len(rlp_node) >= 32:
             trie.put_node(rlp_node)  # can skip this in verification, we don't read the DB after writing.
-            return mpt_hash(rlp_node)
+            out = mpt_hash(rlp_node)
+            if rlp_encode_hash:
+                return rlp_add_str_length_prefix(out)
+            else:
+                return out
         else:
             # return as-is, no hashing, as it's already small enough to embed in-place,
             # and distinct because it's shorter than 32 bytes.
             return rlp_node
 
-    def new_branch_node(items: list) -> bytes:
+    def new_branch_node(items: list, rlp_encode_hash=False) -> bytes:
         # The items must already all be RLP encoded
         # (i.e. each is either a length prefixed hash or a small RLP structure).
         rlp_node = rlp_encode_node(items)
         if len(rlp_node) >= 32:
             trie.put_node(rlp_node)  # can skip this in verification, we don't read the DB after writing.
-            return mpt_hash(rlp_node)
+            out = mpt_hash(rlp_node)
+            if rlp_encode_hash:
+                return rlp_add_str_length_prefix(out)
+            else:
+                return out
         else:
             # return as-is, no hashing, as it's already small enough to embed in-place,
             # and distinct because it's shorter than 32 bytes.
@@ -269,7 +283,8 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                     value = content.mpt_current_root
                 else:
                     value = trie.get_node(content.mpt_current_root)
-                    assert mpt_hash(value) == next.mpt_current_root
+                    if mpt_hash(value) != next.mpt_current_root:
+                        raise Exception("mpt hash of node value does not match expected hash, bad value witness!")
 
                 # TODO: the returned value may be an RLP-encoded empty byte string if the bottom node
                 #  is an empty branch node. Counts as error?
@@ -328,7 +343,7 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                 terminating_child = (access == MPTAccessMode.GRAFTING_B_terminating_child)
                 path_u256 = last.mpt_graft_key_segment
                 new_path_encoded = encode_path(path_u256, path_nibble_len, terminating_child)
-                new_content = last.mpt_current_root
+                new_content = rlp_if_bytes32(last.mpt_current_root)
                 new_key = new_2_node(new_path_encoded, new_content)
                 next.mpt_current_root = new_key
                 return next
@@ -340,21 +355,21 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
         else:
             raise NotImplementedError
 
-        data: bytes
-        if len(content.mpt_current_root) < 32:
-            data = content.mpt_current_root  # the RLP encoded node itself, no DB lookup
-        else:
+        data = bytes(content.mpt_current_root)
+        if len(data) >= 32:  # if not encoded in-place, then need a DB lookup
             # If not arrived yet, then expand it
-            data = trie.get_node(data)
+            key = data
+            data = trie.get_node(key)
             # check that the provided MPT node witness data matches the request node root
-            assert mpt_hash(data) == content.mpt_current_root
+            if mpt_hash(data) != key:
+                raise Exception("mpt hash of rlp node does not match expected hash, bad witness data!")
 
         # decode into a list of raw byte strings.
         # These strings may be 32-byte hashes, or RLP-encoded data if < 32 bytes
         data_li = rlp_decode_node(data)
         if len(data_li) == 0:
             if access == MPTAccessMode.READING:
-                next.mpt_current_root = Bytes32()
+                next.mpt_current_root = b""
                 # stop recursing deeper, null value. (e.g. due to empty branch slot in parent node on our path)
                 next.mpt_value = BLANK_NODE
                 next.mpt_fail_lookup = 1
@@ -371,7 +386,7 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                     # shift out the part that we already traversed from the top (if any)
                     target_prefix = content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)
                     encoded_path = encode_path(target_prefix, remaining_depth, True)
-                    target_root = new_2_node(encoded_path, target_root)
+                    target_root = new_2_node(encoded_path, rlp_if_bytes32(target_root))
 
                 next.mpt_current_root = target_root
                 return next
@@ -384,7 +399,9 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                 raise NotImplementedError
 
         elif len(data_li) == 2:
-            encoded_path = data_li[0]  # path is the first value of the tuple, regardless of extension/leaf type choice
+            # Path is the first value of the tuple, regardless of extension/leaf type choice.
+            # It's RLP encoded, we want the byte string, and then decode it into a nibble path.
+            encoded_path = rlp_strip_length_prefix(data_li[0])
             assert len(encoded_path) >= 1
             terminating, path_u256, path_nibble_len = decode_path(encoded_path)
 
@@ -418,7 +435,7 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                 # now we have a new grafted path to the child node we are grafting,
                 # create the node (a leaf or extension) by bubbling it up as a write.
                 new_path_encoded = encode_path(path_u256, path_nibble_len, terminating_child)
-                new_content = last.mpt_current_root
+                new_content = rlp_if_bytes32(last.mpt_current_root)
                 new_key = new_2_node(new_path_encoded, new_content)
                 next.mpt_current_root = new_key
                 # switch to writing, we just need to propagate the one change we made, no further grafting/deletion
@@ -439,13 +456,17 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                         # it's a leaf, but we'll expand
                         # leaf expand in case it was hashed (>= 32 bytes)
                         # extensions always extend (key can match and point to a branch node that holds the value)
-                        next.mpt_current_root = data_li[1]
+                        if len(data[1]) >= 32:
+                            # It's a hashed reference, just store the hash instead of the RLP-encoded hash
+                            next.mpt_current_root = rlp_strip_length_prefix(data[1])
+                        else:
+                            next.mpt_current_root = data_li[1]
                         next.mpt_lookup_nibble_depth = new_depth
                         # stay in the same MPT mode, this is a new mpt_current_root to expand
                         return next
                     elif access == MPTAccessMode.WRITING:
                         # overwrite the old node value, and compute the root to bubble up the change
-                        new_key = new_2_node(data[0], last.mpt_current_root)
+                        new_key = new_2_node(data[0], rlp_if_bytes32(last.mpt_current_root))
                         next.mpt_current_root = new_key
 
                         # stay in the same MPT mode, this is a new mpt_current_root to bubble up
@@ -482,7 +503,7 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                             key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
 
                         leaf_sibling = data_li[1]
-                        leaf_new = last.mpt_current_root
+                        leaf_new = rlp_if_bytes32(last.mpt_current_root)
 
                         # if the values do not differ only in the last nibble, they need their own node
                         if prefix_len + 1 < path_nibble_len:
@@ -490,8 +511,8 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                             leaf_sibling_path = encode_path(path_u256 << ((prefix_len+1)*4), remaining_len, True)
                             leaf_new_path = encode_path(key_remainder << ((prefix_len+1)*4), remaining_len, True)
 
-                            leaf_sibling = new_2_node(leaf_sibling_path, leaf_sibling)
-                            leaf_new = new_2_node(leaf_new_path, leaf_new)
+                            leaf_sibling = new_2_node(leaf_sibling_path, leaf_sibling, rlp_encode_hash=True)
+                            leaf_new = new_2_node(leaf_new_path, leaf_new, rlp_encode_hash=True)
 
                         # now split by putting them in a branch
                         branch_node = [b""] * 17
@@ -503,7 +524,7 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                         # and if they had a common prefix, they need to get extended to
                         if prefix_len > 0:
                             extension_path = encode_path(prefix_path, prefix_len, False)
-                            extension_root = new_2_node(extension_path, branch_root)
+                            extension_root = new_2_node(extension_path, rlp_if_bytes32(branch_root))
                             next.mpt_current_root = extension_root
                         else:
                             next.mpt_current_root = branch_root
@@ -539,8 +560,11 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                         else:
                             # extension/leaf matches, it's on our path, we can find the node!
 
+                            node = data_li[1]
+                            if len(node) >= 32:
+                                node = rlp_strip_length_prefix(node)
                             # the value of the extension will be the next hashed node to expand into
-                            next.mpt_current_root = data_li[1]
+                            next.mpt_current_root = node
 
                             next.mpt_lookup_nibble_depth = new_depth
                             # stay in the same MPT mode, this is a new mpt_current_root to expand
@@ -553,14 +577,14 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                         key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
 
                     target_sibling = data_li[1]
-                    target_new = last.mpt_current_root
+                    target_new = rlp_if_bytes32(last.mpt_current_root)
 
                     # if there's more than 1 nibble difference,
                     # our value needs a leaf/extension node and can't just go into the branch slot
                     if path_nibble_len + 1 < remainder_nibble_len:
                         remaining_len = remainder_nibble_len - prefix_len - 1
                         target_new_path = encode_path(key_remainder << ((prefix_len+1)*4), remaining_len, terminating)
-                        target_new = new_2_node(target_new_path, target_new)
+                        target_new = new_2_node(target_new_path, target_new, rlp_encode_hash=True)
 
                     # now split by putting them in a branch
                     branch_node = [b""] * 17
@@ -572,7 +596,7 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                     # and if they had a common prefix, they need to get extended to
                     if prefix_len > 0:
                         extension_path = encode_path(prefix_path, prefix_len, False)
-                        next.mpt_current_root = new_2_node(extension_path, branch_root)
+                        next.mpt_current_root = new_2_node(extension_path, rlp_if_bytes32(branch_root))
                     else:
                         next.mpt_current_root = branch_root
 
@@ -599,7 +623,7 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                         key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
 
                     target_sibling = data_li[1]
-                    target_new = last.mpt_current_root
+                    target_new = rlp_if_bytes32(last.mpt_current_root)
 
                     # if there's more than 1 nibble difference,
                     # the other needs a leaf/extension node and can't just go into the branch slot
@@ -618,7 +642,7 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                     # and if they had a common prefix, they need to get extended to
                     if prefix_len > 0:
                         extension_path = encode_path(prefix_path, prefix_len, False)
-                        next.mpt_current_root = new_2_node(extension_path, branch_root)
+                        next.mpt_current_root = new_2_node(extension_path, rlp_if_bytes32(branch_root))
                     else:
                         next.mpt_current_root = branch_root
                     return next
@@ -642,13 +666,16 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                 if access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
                     raise Exception("invalid MPT: cannot graft child node to branch vt slot, vt is always terminal")
                 if access == MPTAccessMode.READING:
-                    next.mpt_current_root = data_li[16]
+                    if len(data_li[16]) >= 32:
+                        next.mpt_current_root = rlp_strip_length_prefix(data_li[16])
+                    else:
+                        next.mpt_current_root = data_li[16]
                     # stay in the same MPT mode, this is a new mpt_current_root to expand
                     return next
                 elif access == MPTAccessMode.WRITING:
                     # we arrived at the key depth already, there are other nodes with longer keys,
                     # but we only care about the vt node (17th of branch)
-                    data_li[16] = last.mpt_current_root
+                    data_li[16] = rlp_if_bytes32(last.mpt_current_root)
 
                     branch_root = new_branch_node(data_li)
                     next.mpt_current_root = branch_root
@@ -667,6 +694,8 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                         remaining_index = [node != b"" for node in data_li].index(True)
                         assert remaining_index != 16
                         remaining_node = data_li[remaining_index]
+                        if len(remaining_node) >= 32:
+                            remaining_node = rlp_strip_length_prefix(remaining_node)
 
                         # visit the remaining node
                         next.mpt_current_root = remaining_node
@@ -707,12 +736,15 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
 
             if access == MPTAccessMode.READING:
                 # new node to expand into
-                next.mpt_current_root = data_li[branch_lookup_nibble]
+                node = data_li[branch_lookup_nibble]
+                if len(node) >= 32:
+                    node = rlp_strip_length_prefix(node)
+                next.mpt_current_root = node
                 next.mpt_lookup_nibble_depth = new_depth
                 return next
             elif access == MPTAccessMode.WRITING:
                 # new node to bubble up into
-                data_li[branch_lookup_nibble] = last.mpt_current_root
+                data_li[branch_lookup_nibble] = rlp_if_bytes32(last.mpt_current_root)
 
                 branch_root = new_branch_node(data_li)
                 next.mpt_current_root = branch_root
@@ -739,7 +771,7 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                 # can only be 0 if it were a vt node, but we turn those in writes, not grafts.
                 assert graft_path_nibbles > 0
                 new_path_encoded = encode_path(graft_path, graft_path_nibbles, terminating_child)
-                new_content = last.mpt_current_root
+                new_content = rlp_if_bytes32(last.mpt_current_root)
                 new_key = new_2_node(new_path_encoded, new_content)
 
                 # write the new node into the place of the old branch
@@ -769,6 +801,9 @@ def make_mpt_step_gen(trie: MPT) -> Processor:
                     remaining_index = [node != b"" for node in data_li].index(True)
 
                     remaining_node = data_li[remaining_index]
+
+                    if len(remaining_node) >= 32:
+                        remaining_node = rlp_strip_length_prefix(remaining_node)
 
                     if remaining_index == 16:
                         # Nothing to append, we can just put vt in the old spot of the current branch node

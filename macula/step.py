@@ -318,7 +318,9 @@ class Step(Container):
     # the step that has step.mpt_value that represents the parent of the current node
     mpt_parent_node_step: RecursiveStep
 
-    # hash of the current node (to expand or to bubble up)
+    # The current node (to expand or to bubble up)
+    # If the RLP-encoded node fits in less than 32 bytes, it's embedded instead of stored in the DB.
+    # If does not fit, then we store the hash (*NOT* RLP encoded), which is 32 bytes.
     mpt_current_root: ByteList[32]  # max 32 bytes. Smaller values than 32 are not hashed.
     # if the node corresponding to the key cannot be found
     # traversal stops with this failure marker. Non-zero if failure.

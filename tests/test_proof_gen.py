@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Set
 from macula.opcodes import OpCode
 from macula.trace import StepsTrace, MPT
 from macula.step import Address, Bytes32, Step
-from macula.util import rlp_encode_list, keccak_256
+from macula import keccak_256
 from macula.exec_mode import ExecMode, exec_mode_err_range
 from macula.interpreter import next_step
 from macula.node_shim import ShimNode
