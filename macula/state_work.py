@@ -5,53 +5,34 @@ from typing import Protocol
 from enum import Enum
 
 
-class StateWork(Enum):
-    CREATE_EXTERNALLY_OWNED_ACCOUNT = 0x00
-    CREATE_CONTRACT_ACCOUNT = 0x01
-
-    SUB_BALANCE = 0x10
-    ADD_BALANCE = 0x11
-
-    READ_CONTRACT_CODE_HASH = 0x20
-    READ_CONTRACT_CODE = 0x21
-    REMOVE_CONTRACT_CODE = 0x22
-
-    READ_NONCE = 0x30
-    SET_NONCE = 0x31
-
-    STORAGE_READ = 0x40
-    STORAGE_WRITE = 0x41
-
-    # TODO: more state ops
-
-    DONE = 0xff
-
-
 def state_work_proc(self, trac: StepsTrace) -> Step:
     last = trac.last()
-    db_op = StateDBOp(int(last.state_mode))
-    if db_op == StateWork.CREATE_EXTERNALLY_OWNED_ACCOUNT:
-        raise NotImplementedError  # TODO
+    state_mode = StateWorkMode(int(last.state_work_scope.state_work.selector()))
 
-    if db_op == StateWork.CREATE_CONTRACT_ACCOUNT:
-        raise NotImplementedError  # TODO
-
-    if db_op == StateWork.SUB_BALANCE:
-        raise NotImplementedError  # TODO
-
-    if db_op == StateWork.ADD_BALANCE:
-        raise NotImplementedError  # TODO
-
-    if db_op == StateWork.READ_CONTRACT_CODE:
-        raise NotImplementedError  # TODO
-
-    if db_op == StateWork.REMOVE_CONTRACT_CODE:
-        raise NotImplementedError  # TODO
-
-    if db_op == StateWork.READ_NONCE:
-        raise NotImplementedError  # TODO
-
-    if db_op == StateWork.SET_NONCE:
-        raise NotImplementedError  # TODO
+    # TODO: implement state actions
+    if state_mode == StateWorkMode.NO_ACTION:
+        value: None = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.HAS_ACCOUNT:
+        value: StateWork_HasAccount = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.CREATE_ACCOUNT:
+        value: StateWork_CreateAccount = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.SUB_BALANCE:
+        value: StateWork_SubBalance = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.ADD_BALANCE:
+        value: StateWork_AddBalance = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.READ_CONTRACT_CODE_HASH:
+        value: StateWork_ReadContractCodeHash = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.READ_CONTRACT_CODE:
+        value: StateWork_ReadContractCode = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.REMOVE_CONTRACT_CODE:
+        value: StateWork_RemoveContractCode = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.READ_NONCE:
+        value: StateWork_ReadNonce = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.SET_NONCE:
+        value: StateWork_SetNonce = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.STORAGE_READ:
+        value: StateWork_StorageRead = last.state_work_scope.state_work.value()
+    if state_mode == StateWorkMode.STORAGE_WRITE:
+        value: StateWork_StorageWrite = last.state_work_scope.state_work.value()
 
     raise NotImplementedError

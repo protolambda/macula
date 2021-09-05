@@ -226,22 +226,12 @@ class RecursiveStep(Union[None, LazyStep]):
             return Step(backing=val.get_backing(), hook=val._hook)
 
 
-class Step(Container):
-    # Unused in the step itself, but important as output, to claim a state-root,
-    # which can then be trusted by the next step.
-    # Steps that access memory need to supply a separate (outside of the step sub-tree)
-    # MPT-proof of the account and/or storage to access the data.
-    state_root: Bytes32
-    # Main mode of operation, to find the right kind of step execution at any given point
-    exec_mode: uint8
-
-    # History scope
-    # ------------------
+class HistoryScope(Container):
     # Most recent 256 blocks (excluding the block itself). Trick: ring-buffer, key = number % 256
     block_hashes: BlockHistory
 
-    # Block scope
-    # ------------------
+
+class BlockScope(Container):
     # TODO: origin balance check for fee payment and value transfer
     coinbase: Address
     gas_limit: uint64
@@ -249,14 +239,15 @@ class Step(Container):
     time: uint64
     difficulty: uint256
     base_fee: uint256
-    # Tx scope
-    # ------------------
+
+
+class TxScope(Container):
     origin: Address
     tx_index: uint64
     gas_price: uint64
 
-    # Contract scope
-    # ------------------
+
+class ContractScope(Container):
     to: Address
     create: boolean
     call_depth: uint64
@@ -277,8 +268,20 @@ class Step(Container):
     # Make storage read-only, to support STATIC-CALL
     read_only: boolean
 
-    # Execution scope
-    # ------------------
+    # return false if out of gas
+    def use_gas(self, delta: uint64) -> bool:
+        pre_gas = self.gas
+        if delta > pre_gas:
+            return False
+        self.gas = pre_gas - delta
+        return True
+
+    def return_gas(self, delta: uint64) -> None:
+        # no overflow, assuming gas total is capped within uint64
+        self.gas += delta
+
+
+class ExecutionScope(Container):
     # We generalize the opcode read from the code at PC,
     # and cache it here to not re-read the code every step of the opcode.
     # Ignored for starting-state (zeroed).
@@ -292,13 +295,101 @@ class Step(Container):
     # When doing a return, continue with the operations after this step.
     return_to_step: RecursiveStep
 
-    # StateDB scope
-    # ------------------
-    # Manages state machine during the StateWork execution mode
-    state_mode = uint8  # see StateWork enum
 
-    # MPT scope
-    # ------------------
+class StateWorkMode(Enum):
+    NO_ACTION = 0
+
+    HAS_ACCOUNT = 1
+    CREATE_ACCOUNT = 2
+
+    SUB_BALANCE = 3
+    ADD_BALANCE = 4
+
+    READ_CONTRACT_CODE_HASH = 5
+    READ_CONTRACT_CODE = 6
+    REMOVE_CONTRACT_CODE = 7
+
+    READ_NONCE = 8
+    SET_NONCE = 9
+
+    STORAGE_READ = 10
+    STORAGE_WRITE = 11
+
+    # TODO: more state ops
+
+
+class StateWork_HasAccount(Container):
+    address: Address
+    result: boolean
+
+class StateWork_CreateAccount(Container):
+    address: Address
+    balance: uint256
+    nonce: uint256
+    code_hash: Bytes32
+
+class StateWork_SubBalance(Container):
+    address: Address
+    sub_value: uint256
+
+class StateWork_AddBalance(Container):
+    address: Address
+    add_value: uint256
+
+class StateWork_ReadContractCodeHash(Container):
+    address: Address
+    code_hash_result: Bytes32
+
+class StateWork_ReadContractCode(Container):
+    address: Address
+    code: Code
+
+class StateWork_RemoveContractCode(Container):
+    address: Address
+
+class StateWork_ReadNonce(Container):
+    address: Address
+    nonce_result: uint256
+
+class StateWork_SetNonce(Container):
+    address: Address
+    nonce: uint256
+
+class StateWork_StorageRead(Container):
+    address: Address
+    key: Bytes32
+    value_result: Bytes32
+
+class StateWork_StorageWrite(Container):
+    address: Address
+    key: Bytes32
+    value: Bytes32
+
+
+StateWork = Union[  # All these must match the enum StateWorkMode
+    None,                            # NO_ACTION
+    StateWork_HasAccount,            # HAS_ACCOUNT
+    StateWork_CreateAccount,         # CREATE_ACCOUNT
+    StateWork_SubBalance,            # SUB_BALANCE
+    StateWork_AddBalance,            # ADD_BALANCE
+    StateWork_ReadContractCodeHash,  # READ_CONTRACT_CODE_HASH
+    StateWork_ReadContractCode,      # READ_CONTRACT_CODE
+    StateWork_RemoveContractCode,    # REMOVE_CONTRACT_CODE
+    StateWork_ReadNonce,             # READ_NONCE
+    StateWork_SetNonce,              # SET_NONCE
+    StateWork_StorageRead,           # STORAGE_READ
+    StateWork_StorageWrite,          # STORAGE_WRITE
+]
+
+class StateWorkScope(Container):
+    # Manages state machine during the StateWork execution mode
+    state_work: StateWork
+    # Once the work is done, this is set to True,
+    # to carry over the work in the parent step without falling back in the same state work routine.
+    done: boolean
+
+
+class MPTWorkScope(Container):
     # On a read: recurse from top to bottom, then store bottom node
     # On a write: recurse from top to bottom, modify to write, then unwind back
     # On a delete: recurse from top to bottom, delete, propagate deletion, unwind back,
@@ -344,17 +435,20 @@ class Step(Container):
     # Length in nibbles of the segment
     mpt_graft_key_nibbles: uint64
 
+    # Result of reading. Assumed to fit in 2048 bytes. (contract code is only referenced by hash)
+    # E.g. RLP-encoded account
     mpt_value: ByteList[2048]
 
 
-    # return false if out of gas
-    def use_gas(self, delta: uint64) -> bool:
-        pre_gas = self.gas
-        if delta > pre_gas:
-            return False
-        self.gas = pre_gas - delta
-        return True
+class Step(Container):
+    state_root: Bytes32
 
-    def return_gas(self, delta: uint64) -> None:
-        # no overflow, assuming gas total is capped within uint64
-        self.gas += delta
+    # Main mode of operation, to find the right kind of step execution at any given point
+    exec_mode: uint8
+
+    history_scope: HistoryScope
+    block_scope: BlockScope
+    tx_scope: TxScope
+    contract_scope: ContractScope
+    state_work_scope: StateWorkScope
+    mpt_work_scope: MPTWorkScope
