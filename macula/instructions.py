@@ -540,8 +540,25 @@ def op_ext_code_copy(trac: StepsTrace) -> Step:
 def op_ext_code_hash(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    # Do we have the code hash yet?
+    if last.state_work.mode == StateWorkMode.RETURNED:
+        last.state_work.mode = StateWorkMode.IDLE.value  # kindly reset the mode, to not mess up future uses.
+        value: StateWork_ReadContractCodeHash = last.state_work.work.value()
+        # Overwrite the address argument with the result
+        next.contract.stack.tweak_b32(value.code_hash_result)
+        return progress(next)
+    else:
+        assert last.state_work.mode == StateWorkMode.IDLE
+        addr = Address.from_b32(last.contract.stack.peek_b32())
+        next.state_work.mode = StateWorkMode.REQUESTING.value
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED.value
+        next.state_work.work.change(
+            selector=StateWorkType.READ_CONTRACT_CODE_HASH.value,
+            value=StateWork_ReadContractCodeHash(address=addr)
+        )
+        next.return_to_step.change(selector=1, value=last)
+        next.exec_mode = ExecMode.StateWork.value
+        return next
 
 
 def op_gas_price(trac: StepsTrace) -> Step:

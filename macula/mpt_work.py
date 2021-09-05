@@ -149,6 +149,9 @@ class MPTAccessMode(Enum):
     RETURNING_WRITE = 0x31
     RETURNING_DELETE = 0x32
 
+    # When not performing MPT work, the access is inactive
+    INACTIVE = 0xf0
+    # After performing MPT work. After reading the value the calling step should reset it back to INACTIVE
     DONE = 0xff
 
 
@@ -273,6 +276,8 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
             return rlp_node
 
     access = MPTAccessMode(int(last.mpt_work.mode))
+
+    assert access != MPTAccessMode.INACTIVE and access != MPTAccessMode.DONE
 
     # Note: this MPT code assumes:
     #  - that values in the MPT tree can have keys with different lengths, like the real MPT spec, unlike e.g. account trie.

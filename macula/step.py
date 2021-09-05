@@ -289,7 +289,7 @@ class ContractScope(Container):
         self.gas += delta
 
 
-class StateWorkMode(Enum):
+class StateWorkType(Enum):
     NO_ACTION = 0
 
     HAS_ACCOUNT = 1
@@ -335,6 +335,7 @@ class StateWork_ReadContractCodeHash(Container):
 
 class StateWork_ReadContractCode(Container):
     address: Address
+    code_hash_result: Bytes32
     code: Code
 
 class StateWork_RemoveContractCode(Container):
@@ -359,7 +360,7 @@ class StateWork_StorageWrite(Container):
     value: Bytes32
 
 
-StateWork = Union[  # All these must match the enum StateWorkMode
+StateWork = Union[  # All these must match the enum StateWorkType
     None,                            # NO_ACTION
     StateWork_HasAccount,            # HAS_ACCOUNT
     StateWork_CreateAccount,         # CREATE_ACCOUNT
@@ -374,12 +375,20 @@ StateWork = Union[  # All these must match the enum StateWorkMode
     StateWork_StorageWrite,          # STORAGE_WRITE
 ]
 
+class StateWorkMode(Enum):
+    IDLE = 0
+    REQUESTING = 1
+    CONTINUE_CODE_LOOKUP = 2
+    RETURNED = 0xff
+
+
 class StateWorkScope(Container):
     # Manages state machine during the StateWork execution mode
     work: StateWork
-    # Once the work is done, this is set to True,
-    # to carry over the work in the parent step without falling back in the same state work routine.
-    done: boolean
+    # Current StateWorkMode
+    mode: uint8
+    # After the mode completes, return to caller, set to this StateWorkMode
+    mode_on_finish: uint8
 
 
 class MPTWorkScope(Container):
