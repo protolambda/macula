@@ -1048,7 +1048,7 @@ def make_push(size: int, push_byte_size: int) -> Processor:
         if end_min - start_min < 32:
             # right pad to 32 bytes
             content += b"\x00" * (32 - (end_min - start_min))
-        next.contract.stack
+        next.contract.stack.push_b32(Bytes32(content))
         next.contract.pc = pc + size
         next.exec_mode = ExecMode.OpcodeLoad.value
         return next

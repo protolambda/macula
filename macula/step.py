@@ -276,6 +276,10 @@ class ContractScope(Container):
     # The program-counter, index pointing to current executed opcode in the code
     pc: uint64
 
+    # some operations need more than 1 step to execute.
+    # Track execution progress.
+    sub_index: uint64
+
     # return false if out of gas
     def use_gas(self, delta: uint64) -> bool:
         pre_gas = self.gas
