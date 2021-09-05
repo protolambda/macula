@@ -313,7 +313,7 @@ def op_sha3(trac: StepsTrace) -> Step:
 def op_address(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    next.contract.stack.push_b32(last.code_addr.to_b32())
+    next.contract.stack.push_b32(last.contract.code_addr.to_b32())
     return progress(next)
 
 
@@ -483,7 +483,7 @@ def op_ext_code_size(trac: StepsTrace) -> Step:
 def op_code_size(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    next.contract.stack.push_u256(uint256(len(last.code)))
+    next.contract.stack.push_u256(uint256(len(last.contract.code)))
     return progress(next)
 
 
@@ -506,7 +506,7 @@ def op_code_copy(trac: StepsTrace) -> Step:
         delta = length
 
     if length > 0:
-        code_copy = bytes(last.code[code_offset:code_offset+delta])
+        code_copy = bytes(last.contract.code[code_offset:code_offset+delta])
         # touches two words of memory if the memory offset is not aligned, but that's still manageable
         next.contract.memory[mem_offset:mem_offset+delta] = code_copy
         mem_offset += delta
@@ -651,7 +651,7 @@ def op_jump(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     pos = next.contract.stack.pop_u256()
-    if not last.code.valid_jump_dest(pos):
+    if not last.contract.code.valid_jump_dest(pos):
         next.exec_mode = ExecMode.ErrInvalidJump
         return next
     next.contract.pc = uint64(pos)
@@ -663,7 +663,7 @@ def op_jump_i(trac: StepsTrace) -> Step:
     next = last.copy()
     pos, cond = next.contract.stack.pop_u256(), next.contract.stack.pop_u256()
     if cond != uint256(0):
-        if not last.code.valid_jump_dest(pos):
+        if not last.contract.code.valid_jump_dest(pos):
             next.exec_mode = ExecMode.ErrInvalidJump
             return next
         # perform jump
@@ -778,7 +778,7 @@ def op_call(trac: StepsTrace) -> Step:
 
     # part 3: Fail if we're trying to execute above the call depth limit
     if part == 3:
-        if last.call_depth > CALL_CREATE_DEPTH:
+        if last.contract.call_depth > CALL_CREATE_DEPTH:
             next.exec_mode = ExecMode.ErrDepth.value
             return next
 
@@ -811,7 +811,7 @@ def op_call(trac: StepsTrace) -> Step:
 
     # Part 7: transfer value from caller to receiver address
     if part == 7:
-        addr = last.code_addr
+        addr = last.contract.code_addr
         # TODO: probably need to split up the transfer in read+write, twice
         next.contract.sub_index = 8
         return next
@@ -837,7 +837,7 @@ def op_call(trac: StepsTrace) -> Step:
     if part == 11:
         next.contract.sub_index = 12
         # if 0 length code, just don't run anything
-        if len(last.code) != 0:
+        if len(last.contract.code) != 0:
             next.contract.to = Address.from_b32(last.contract.stack.back_b32(1))
             next.contract.gas = next.contract.stack.back_u256(0)
             next.exec_mode = ExecMode.CallPre
@@ -924,10 +924,10 @@ def make_log(size: int) -> Processor:
 def op_push1(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    code_len = len(last.code)
+    code_len = len(last.contract.code)
     pc = last.contract.pc + 1  # read after current opcode
     if pc < code_len:
-        val: uint8 = last.code[pc]
+        val: uint8 = last.contract.code[pc]
         next.contract.stack.push_u256(uint256(val))
     else:
         next.contract.stack.push_u256(uint256(0))
@@ -943,7 +943,7 @@ def make_push(size: int, push_byte_size: int) -> Processor:
         last = trac.last()
         next = last.copy()
         # don't read any code out of bounds
-        code_len = len(last.code)
+        code_len = len(last.contract.code)
         start_min = code_len
         pc = last.contract.pc
         if pc + 1 < start_min:
@@ -952,7 +952,7 @@ def make_push(size: int, push_byte_size: int) -> Processor:
         if start_min + push_byte_size < end_min:
             end_min = start_min + push_byte_size
         # push_byte_size <= 32, get the code (it may not align with 32 byte tree leafs though)
-        content = last.code[start_min:end_min]
+        content = last.contract.code[start_min:end_min]
         if end_min - start_min < 32:
             # right pad to 32 bytes
             content += b"\x00" * (32 - (end_min - start_min))

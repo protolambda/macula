@@ -1,4 +1,5 @@
 from typing import Optional, BinaryIO, Union as PyUnion, Any
+from enum import Enum
 from remerkleable.complex import Container, Vector, List, Type, TypeVar
 from remerkleable.union import Union
 from remerkleable.byte_arrays import Bytes32, ByteVector, ByteList
@@ -390,46 +391,46 @@ class MPTWorkScope(Container):
     # Instructs which trie to operate on
     # (for the DB it really doesn't matter, as we access all nodes by the hash of the node contents,
     #  but to map it to the right API calls on retrieval it's still useful)
-    mpt_tree_source: uint8  # see MPTTreeSource enum
-    mpt_start_reference: Bytes32  # the starting point, to identify e.g. an account
+    tree_source: uint8  # see MPTTreeSource enum
+    start_reference: Bytes32  # the starting point, to identify e.g. an account
 
     # Manages state machine during the MPTWork execution mode
-    mpt_mode: uint8  # see MPTAccessMode enum
-    # what to write at the mpt_lookup_key, if in writing mode,
+    mode: uint8  # see MPTAccessMode enum
+    # what to write at the lookup_key, if in writing mode,
     # only used to start writing once done with the reading part.
-    mpt_write_root: ByteList[32]
+    write_root: ByteList[32]
     # after finishing the mode, continue with this next mode.
-    mpt_mode_on_finish: uint8
+    mode_on_finish: uint8
 
-    # the step that has step.mpt_value that represents the parent of the current node
-    mpt_parent_node_step: RecursiveStep
+    # the step that has step.value that represents the parent of the current node
+    parent_node_step: RecursiveStep
 
     # The current node (to expand or to bubble up)
     # If the RLP-encoded node fits in less than 32 bytes, it's embedded instead of stored in the DB.
     # If does not fit, then we store the hash (*NOT* RLP encoded), which is 32 bytes.
-    mpt_current_root: ByteList[32]  # max 32 bytes. Smaller values than 32 are not hashed.
+    current_root: ByteList[32]  # max 32 bytes. Smaller values than 32 are not hashed.
     # if the node corresponding to the key cannot be found
     # traversal stops with this failure marker. Non-zero if failure.
-    mpt_fail_lookup: uint8
+    fail_lookup: uint8
 
     # Note: First nibble of key = most significant nibble of uint256
     # I.e., to read the next nibble, shift left by 4 bits
-    mpt_lookup_key: uint256
+    lookup_key: uint256
     # how many nibbles of the key we need to read
-    mpt_lookup_key_nibbles: uint64
+    lookup_key_nibbles: uint64
     # how much of the key has been read
-    mpt_lookup_nibble_depth: uint64
+    lookup_nibble_depth: uint64
 
     # When removing branch nodes, and grafting remaining child with parent,
     # track the part of the key to insert between the two. Can be empty.
-    # First nibble is the most significant, like mpt_lookup_key
-    mpt_graft_key_segment: uint256
+    # First nibble is the most significant, like lookup_key
+    graft_key_segment: uint256
     # Length in nibbles of the segment
-    mpt_graft_key_nibbles: uint64
+    graft_key_nibbles: uint64
 
     # Result of reading. Assumed to fit in 2048 bytes. (contract code is only referenced by hash)
     # E.g. RLP-encoded account
-    mpt_value: ByteList[2048]
+    value: ByteList[2048]
 
 
 class Step(Container):

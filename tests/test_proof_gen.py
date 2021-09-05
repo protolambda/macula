@@ -127,8 +127,8 @@ def test_execute():
     print("code", code.hex())
     trac = TestTrace()
     step = Step()
-    step.code = code
-    step.gas = 1000
+    step.contract.code = code
+    step.contract.gas = 1000
     step.exec_mode = ExecMode.CallPre.value
     trac.add_step(step)
 
@@ -148,10 +148,10 @@ def test_execute():
         raise Exception("stopped interpreter, too many steps, infinite loop?", step)
 
     for i, step, access in zip(range(len(trac.steps)), trac.steps, trac.witness_tracker):
-        print(f"step {i}: {step.hash_tree_root().hex()} -- {ExecMode(step.exec_mode)}, {OpCode(step.op)}")
+        print(f"step {i}: {step.hash_tree_root().hex()} -- {ExecMode(step.exec_mode)}, {OpCode(step.contract.op)}")
         for gindex in access:
             print(f"    {bin(gindex)[2:].ljust(20, ' ')}: ", step.get_backing().getter(gindex).merkle_root().hex())
-    print("return data:", bytes(trac.last().ret_data).hex())
+    print("return data:", bytes(trac.last().contract.ret_data).hex())
 
 
 ONE_ETHER = 1_000_000_000_000_000_000

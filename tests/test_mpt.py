@@ -1,18 +1,7 @@
 from .test_proof_gen import TestMPT
-from macula.mpt_proof_trace import mpt_hash, MPTAccessMode, make_mpt_step_gen
-from macula.step import Step, uint256
+from macula.mpt_work import mpt_hash, MPTAccessMode, mpt_step_with_trie
+from macula.step import Step, uint256, MPTWorkScope
 from macula.trace import StepsTrace
-
-
-# No full trace, just return a single step last step for debugging purposes.
-class SingleStepTrace(StepsTrace):
-    step: Step
-
-    def __init__(self, step: Step):
-        self.step = step
-
-    def last(self) -> Step:
-        return self.step
 
 
 def test_mpt_read():
@@ -21,26 +10,27 @@ def test_mpt_read():
     mpt.insert(b'\x12\x28' + b'\x22'*30, b'\x56\x42\x02\x44\x55')
     root = mpt.trie.root_hash
     step = Step(
-        mpt_mode=MPTAccessMode.READING.value,
-        mpt_current_root=root,
-        mpt_lookup_key=uint256(0x1234 << (256 - 4*4)),
-        mpt_lookup_key_nibbles=64,
-        mpt_lookup_nibble_depth=0,
-        mpt_mode_on_finish=0xff,
+        mpt_work=MPTWorkScope(
+            mode=MPTAccessMode.READING.value,
+            current_root=root,
+            lookup_key=uint256(0x1234 << (256 - 4*4)),
+            lookup_key_nibbles=64,
+            lookup_nibble_depth=0,
+            mode_on_finish=0xff,
+        )
     )
-    step_fn = make_mpt_step_gen(mpt)
 
     for i in range(512):
-        if step.mpt_mode == 0xff:
+        if step.mpt_work.mode == 0xff:
             print("done!")
-            if step.mpt_fail_lookup == 0:
-                print("success! rlp value: %s" % step.mpt_value.hex())
+            if step.mpt_work.fail_lookup == 0:
+                print("success! rlp value: %s" % step.mpt_work.value.hex())
             else:
-                print("value not found, reason: %d" % step.mpt_fail_lookup)
+                print("value not found, reason: %d" % step.mpt_work.fail_lookup)
+            assert step.mpt_work.fail_lookup == 0
             return
 
-        trac = SingleStepTrace(step)
-        out = step_fn(trac)
+        out = mpt_step_with_trie(step, mpt)
         print(out)
         step = out
 
