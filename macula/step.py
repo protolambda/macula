@@ -295,21 +295,26 @@ class StateWorkType(Enum):
     HAS_ACCOUNT = 1
     CREATE_ACCOUNT = 2
 
-    SUB_BALANCE = 3
-    ADD_BALANCE = 4
+    GET_BALANCE = 3
+    SET_BALANCE = 4
+    SUB_BALANCE = 5
+    ADD_BALANCE = 6
 
-    READ_CONTRACT_CODE_HASH = 5
-    READ_CONTRACT_CODE = 6
-    REMOVE_CONTRACT_CODE = 7
+    GET_CONTRACT_CODE_HASH = 7
+    SET_CONTRACT_CODE_HASH = 8
 
-    READ_NONCE = 8
-    SET_NONCE = 9
+    GET_CONTRACT_CODE = 9
+    SET_CONTRACT_CODE = 10
 
-    STORAGE_READ = 10
-    STORAGE_WRITE = 11
+    GET_CONTRACT_CODE_SIZE = 11
+
+    GET_NONCE = 12
+    SET_NONCE = 13
+
+    STORAGE_READ = 14
+    STORAGE_WRITE = 15
 
     # TODO: more state ops
-
 
 class StateWork_HasAccount(Container):
     address: Address
@@ -321,6 +326,14 @@ class StateWork_CreateAccount(Container):
     nonce: uint256
     code_hash: Bytes32
 
+class StateWork_GetBalance(Container):
+    address: Address
+    value_result: uint256
+
+class StateWork_SetBalance(Container):
+    address: Address
+    value: uint256
+
 class StateWork_SubBalance(Container):
     address: Address
     sub_value: uint256
@@ -329,19 +342,28 @@ class StateWork_AddBalance(Container):
     address: Address
     add_value: uint256
 
-class StateWork_ReadContractCodeHash(Container):
+class StateWork_GetContractCodeHash(Container):
     address: Address
     code_hash_result: Bytes32
 
-class StateWork_ReadContractCode(Container):
+class StateWork_SetContractCodeHash(Container):
+    address: Address
+    code_hash_result: Bytes32
+
+class StateWork_GetContractCode(Container):
     address: Address
     code_hash_result: Bytes32
     code: Code
 
-class StateWork_RemoveContractCode(Container):
+class StateWork_SetContractCode(Container):
     address: Address
+    code: Code
 
-class StateWork_ReadNonce(Container):
+class StateWork_GetContractCodeSize(Container):
+    address: Address
+    size: uint64
+
+class StateWork_GetNonce(Container):
     address: Address
     nonce_result: uint256
 
@@ -364,12 +386,16 @@ StateWork = Union[  # All these must match the enum StateWorkType
     None,                            # NO_ACTION
     StateWork_HasAccount,            # HAS_ACCOUNT
     StateWork_CreateAccount,         # CREATE_ACCOUNT
+    StateWork_GetBalance,            # GET_BALANCE
+    StateWork_SetBalance,            # SET_BALANCE
     StateWork_SubBalance,            # SUB_BALANCE
     StateWork_AddBalance,            # ADD_BALANCE
-    StateWork_ReadContractCodeHash,  # READ_CONTRACT_CODE_HASH
-    StateWork_ReadContractCode,      # READ_CONTRACT_CODE
-    StateWork_RemoveContractCode,    # REMOVE_CONTRACT_CODE
-    StateWork_ReadNonce,             # READ_NONCE
+    StateWork_GetContractCodeHash,   # GET_CONTRACT_CODE_HASH
+    StateWork_SetContractCodeHash,   # SET_CONTRACT_CODE_HASH
+    StateWork_GetContractCode,       # GET_CONTRACT_CODE
+    StateWork_SetContractCode,       # SET_CONTRACT_CODE
+    StateWork_GetContractCodeSize,   # GET_CONTRACT_CODE_SIZE
+    StateWork_GetNonce,              # GET_NONCE
     StateWork_SetNonce,              # SET_NONCE
     StateWork_StorageRead,           # STORAGE_READ
     StateWork_StorageWrite,          # STORAGE_WRITE
@@ -378,7 +404,10 @@ StateWork = Union[  # All these must match the enum StateWorkType
 class StateWorkMode(Enum):
     IDLE = 0
     REQUESTING = 1
+    # After getting the code-hash, load the full code
     CONTINUE_CODE_LOOKUP = 2
+    # Like code-lookup, but only return the size of the code
+    CONTINUE_CODE_SIZE_LOOKUP = 3
     RETURNED = 0xff
 
 

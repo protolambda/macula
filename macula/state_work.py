@@ -33,13 +33,19 @@ def state_work_proc(trac: StepsTrace) -> Step:
         if typ == StateWorkType.CREATE_ACCOUNT:
             value: StateWork_CreateAccount = last.state_work.work.value()
             raise NotImplementedError
+        if typ == StateWorkType.GET_BALANCE:
+            value: StateWork_GetBalance = last.state_work.work.value()
+            raise NotImplementedError
+        if typ == StateWorkType.SET_BALANCE:
+            value: StateWork_SetBalance = last.state_work.work.value()
+            raise NotImplementedError
         if typ == StateWorkType.SUB_BALANCE:
             value: StateWork_SubBalance = last.state_work.work.value()
             raise NotImplementedError
         if typ == StateWorkType.ADD_BALANCE:
             value: StateWork_AddBalance = last.state_work.work.value()
             raise NotImplementedError
-        if typ == StateWorkType.READ_CONTRACT_CODE_HASH:
+        if typ == StateWorkType.GET_CONTRACT_CODE_HASH:
             if last.mpt_work.mode == MPTAccessMode.DONE.value:
                 code_hash: Bytes32
                 if last.mpt_work.fail_lookup != 0:
@@ -51,11 +57,11 @@ def state_work_proc(trac: StepsTrace) -> Step:
                 caller = last.return_to_step.value()
                 next: Step = caller.copy()
                 next.state_work.mode = last.state_work.mode_on_finish
-                value: StateWork_ReadContractCodeHash = next.state_work.work.value()
+                value: StateWork_GetContractCodeHash = next.state_work.work.value()
                 value.code_hash_result = code_hash
                 return next
             else:
-                value: StateWork_ReadContractCodeHash = last.state_work.work.value()
+                value: StateWork_GetContractCodeHash = last.state_work.work.value()
                 key = mpt_hash(value.address)  # account addresses are hashed to get a trie key
                 next = last.copy()
                 next.exec_mode = ExecMode.MPTWork.value
@@ -70,26 +76,31 @@ def state_work_proc(trac: StepsTrace) -> Step:
                 # we'll return to this current step, but with MPT mode set to DONE
                 next.return_to_step.change(selector=1, value=last)
                 return next
-
-        if typ == StateWorkType.READ_CONTRACT_CODE:
-            value: StateWork_ReadContractCode = last.state_work.work.value()
+        if typ == StateWorkType.SET_CONTRACT_CODE_HASH:
+            value: StateWork_SetContractCodeHash = last.state_work.work.value()
+            raise NotImplementedError
+        if typ == StateWorkType.GET_CONTRACT_CODE:
+            value: StateWork_GetContractCode = last.state_work.work.value()
 
             next = last.copy()
 
             # We first run the code-hash retrieval, return to this step with the result + continuation mode
             next.state_work.work.change(
-                selector=StateWorkType.READ_CONTRACT_CODE_HASH.value,
-                value=StateWork_ReadContractCodeHash(address=value.address))
+                selector=StateWorkType.GET_CONTRACT_CODE_HASH.value,
+                value=StateWork_GetContractCodeHash(address=value.address))
             next.state_work.mode = StateWorkMode.REQUESTING.value
             next.state_work.mode_on_finish = StateWorkMode.CONTINUE_CODE_LOOKUP.value
             next.return_to_step.change(selector=1, value=last)
             return next
 
-        if typ == StateWorkType.REMOVE_CONTRACT_CODE:
-            value: StateWork_RemoveContractCode = last.state_work.work.value()
+        if typ == StateWorkType.SET_CONTRACT_CODE:
+            value: StateWork_SetContractCode = last.state_work.work.value()
             raise NotImplementedError
-        if typ == StateWorkType.READ_NONCE:
-            value: StateWork_ReadNonce = last.state_work.work.value()
+        if typ == StateWorkType.GET_CONTRACT_CODE_SIZE:
+            value: StateWork_GetContractCodeSize = last.state_work.work.value()
+            raise NotImplementedError
+        if typ == StateWorkType.GET_NONCE:
+            value: StateWork_GetNonce = last.state_work.work.value()
             raise NotImplementedError
         if typ == StateWorkType.SET_NONCE:
             value: StateWork_SetNonce = last.state_work.work.value()
@@ -101,7 +112,7 @@ def state_work_proc(trac: StepsTrace) -> Step:
             value: StateWork_StorageWrite = last.state_work.work.value()
             raise NotImplementedError
     if mode == StateWorkMode.CONTINUE_CODE_LOOKUP:
-        value: StateWork_ReadContractCodeHash = last.state_work.work.value()
+        value: StateWork_GetContractCodeHash = last.state_work.work.value()
         code_hash = value.code_hash_result
         code: Code
         if code_hash == Bytes32():
@@ -113,8 +124,8 @@ def state_work_proc(trac: StepsTrace) -> Step:
         next: Step = caller.copy()
         next.state_work.mode = last.state_work.mode_on_finish
         next.state_work.work.change(
-            selector=StateWorkType.READ_CONTRACT_CODE.value,
-            value=StateWork_ReadContractCode(address=value.address, code_hash_result=code_hash, code=code))
+            selector=StateWorkType.GET_CONTRACT_CODE.value,
+            value=StateWork_GetContractCode(address=value.address, code_hash_result=code_hash, code=code))
         return next
 
     raise NotImplementedError
