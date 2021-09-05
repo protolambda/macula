@@ -268,6 +268,13 @@ class ContractScope(Container):
     # Make storage read-only, to support STATIC-CALL
     read_only: boolean
 
+    # We generalize the opcode read from the code at PC,
+    # and cache it here to not re-read the code every step of the opcode.
+    # Ignored for starting-state (zeroed).
+    op: uint8
+    # The program-counter, index pointing to current executed opcode in the code
+    pc: uint64
+
     # return false if out of gas
     def use_gas(self, delta: uint64) -> bool:
         pre_gas = self.gas
@@ -279,21 +286,6 @@ class ContractScope(Container):
     def return_gas(self, delta: uint64) -> None:
         # no overflow, assuming gas total is capped within uint64
         self.gas += delta
-
-
-class ExecutionScope(Container):
-    # We generalize the opcode read from the code at PC,
-    # and cache it here to not re-read the code every step of the opcode.
-    # Ignored for starting-state (zeroed).
-    op: uint8
-    # The program-counter, index pointing to current executed opcode in the code
-    pc: uint64
-    # when splitting up operations further
-    sub_index: uint64
-    # sub-computations need a place to track their inner state
-    sub_data: SubData
-    # When doing a return, continue with the operations after this step.
-    return_to_step: RecursiveStep
 
 
 class StateWorkMode(Enum):
@@ -383,7 +375,7 @@ StateWork = Union[  # All these must match the enum StateWorkMode
 
 class StateWorkScope(Container):
     # Manages state machine during the StateWork execution mode
-    state_work: StateWork
+    work: StateWork
     # Once the work is done, this is set to True,
     # to carry over the work in the parent step without falling back in the same state work routine.
     done: boolean
@@ -446,9 +438,14 @@ class Step(Container):
     # Main mode of operation, to find the right kind of step execution at any given point
     exec_mode: uint8
 
-    history_scope: HistoryScope
-    block_scope: BlockScope
-    tx_scope: TxScope
-    contract_scope: ContractScope
-    state_work_scope: StateWorkScope
-    mpt_work_scope: MPTWorkScope
+    history: HistoryScope
+    block: BlockScope
+    tx: TxScope
+    contract: ContractScope
+
+    state_work: StateWorkScope
+    mpt_work: MPTWorkScope
+
+    # When doing a return, continue with the operations after this step.
+    # Also used for internal returns, e.g. unwinding back to caller of state-work.
+    return_to_step: RecursiveStep

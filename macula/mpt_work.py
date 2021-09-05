@@ -272,7 +272,7 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
             # and distinct because it's shorter than 32 bytes.
             return rlp_node
 
-    access = MPTAccessMode(int(last.mpt_mode))
+    access = MPTAccessMode(int(last.mpt_work.mpt_mode))
 
     # Note: this MPT code assumes:
     #  - that values in the MPT tree can have keys with different lengths, like the real MPT spec, unlike e.g. account trie.
@@ -300,29 +300,29 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
         next = content.copy()
 
         # index of last step becomes the parent of the next step
-        next.mpt_parent_node_step.change(selector=1, value=last)
+        next.mpt_work.mpt_parent_node_step.change(selector=1, value=last)
 
-        if content.mpt_lookup_key_nibbles == content.mpt_lookup_nibble_depth:  # have we arrived yet?
-            if len(content.mpt_current_root) < 32:
-                value = content.mpt_current_root
+        if content.mpt_work.mpt_lookup_key_nibbles == content.mpt_work.mpt_lookup_nibble_depth:  # have we arrived yet?
+            if len(content.mpt_work.mpt_current_root) < 32:
+                value = content.mpt_work.mpt_current_root
             else:
-                value = trie.get_node(content.mpt_current_root)
-                if mpt_hash(value) != next.mpt_current_root:
+                value = trie.get_node(content.mpt_work.mpt_current_root)
+                if mpt_hash(value) != next.mpt_work.mpt_current_root:
                     raise Exception("mpt hash of node value does not match expected hash, bad value witness!")
 
             # TODO: the returned value may be an RLP-encoded empty byte string if the bottom node
             #  is an empty branch node. Counts as error?
 
-            next.mpt_value = value
+            next.mpt_work.mpt_value = value
             # TODO: after reading, the current-root/value is to be read, not to replace the root reference. Needs different mode.
-            next.mpt_mode = content.mpt_mode_on_finish
+            next.mpt_work.mpt_mode = content.mpt_work.mpt_mode_on_finish
             return next
 
     elif access == MPTAccessMode.WRITING:
         # have we bubbled up to the top yet?
-        if last.mpt_lookup_nibble_depth == 0:
+        if last.mpt_work.mpt_lookup_nibble_depth == 0:
             next = last.copy()
-            next.mpt_mode = last.mpt_mode_on_finish
+            next.mpt_work.mpt_mode = last.mpt_work.mpt_mode_on_finish
             return next
 
         # We follow the same logic-flow as if we were at this step,
@@ -330,56 +330,56 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
         # we modify a copy of that node and bubble up the change.
         #
         # we're unwinding back to parent nodes, not on last node.
-        content = last.mpt_parent_node_step.value()
+        content = last.mpt_work.mpt_parent_node_step.value()
         next = content.copy()
     elif access == MPTAccessMode.DELETING:
         # have we bubbled up to the top yet?
-        if last.mpt_lookup_nibble_depth == 0:
+        if last.mpt_work.mpt_lookup_nibble_depth == 0:
             # If we're at the top, we have deleted the last item in the trie.
             # For an empty trie, write an empty node
             next = last.copy()
-            next.mpt_mode = last.mpt_mode_on_finish
+            next.mpt_work.mpt_mode = last.mpt_work.mpt_mode_on_finish
             trie.put_node(BLANK_NODE)
-            next.mpt_current_root = BLANK_ROOT
+            next.mpt_work.mpt_current_root = BLANK_ROOT
             return next
 
         # similar to writing, after reading from top to bottom,
         # we bubble back to delete the necessary nodes
-        content = last.mpt_parent_node_step.value()
+        content = last.mpt_work.mpt_parent_node_step.value()
         # no next value yet, we don't now if we're going up or down yet (need to go down if starting a graft)
     elif access == MPTAccessMode.GRAFTING_A:
         # back to the parent after we get the details of the current node to graft with
-        content = last.mpt_parent_node_step.value()
+        content = last.mpt_work.mpt_parent_node_step.value()
         assert content is not None
         next = content.copy()
     elif access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
         # have we bubbled up to the top yet?
-        if last.mpt_lookup_nibble_depth == 0:
+        if last.mpt_work.mpt_lookup_nibble_depth == 0:
             # if we're grafting at the top, we make the top a leaf/extension node
             next = last.copy()
-            next.mpt_mode = last.mpt_mode_on_finish
-            path_nibble_len = last.mpt_graft_key_nibbles
+            next.mpt_work.mpt_mode = last.mpt_work.mpt_mode_on_finish
+            path_nibble_len = last.mpt_work.mpt_graft_key_nibbles
 
             # can only be 0 if it were a vt node, but we turn those in writes, not grafts.
             assert path_nibble_len > 0
 
             # top node becomes leaf/extension
             terminating_child = (access == MPTAccessMode.GRAFTING_B_terminating_child)
-            path_u256 = last.mpt_graft_key_segment
+            path_u256 = last.mpt_work.mpt_graft_key_segment
             new_path_encoded = encode_path(path_u256, path_nibble_len, terminating_child)
-            new_content = rlp_if_bytes32(last.mpt_current_root)
+            new_content = rlp_if_bytes32(last.mpt_work.mpt_current_root)
             new_key = new_2_node(new_path_encoded, new_content)
-            next.mpt_current_root = new_key
+            next.mpt_work.mpt_current_root = new_key
             return next
 
         # bubble up the graft result after modifying the parent end of our graft
-        content = last.mpt_parent_node_step.value()
+        content = last.mpt_work.mpt_parent_node_step.value()
         assert content is not None
         next = content.copy()
     else:
         raise NotImplementedError
 
-    data = bytes(content.mpt_current_root)
+    data = bytes(content.mpt_work.mpt_current_root)
     if len(data) >= 32:  # if not encoded in-place, then need a DB lookup
         # If not arrived yet, then expand it
         key = data
@@ -393,26 +393,26 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
     data_li = rlp_decode_node(data)
     if len(data_li) == 0:
         if access == MPTAccessMode.READING:
-            next.mpt_current_root = b""
+            next.mpt_work.mpt_current_root = b""
             # stop recursing deeper, null value. (e.g. due to empty branch slot in parent node on our path)
-            next.mpt_value = BLANK_NODE
-            next.mpt_fail_lookup = 1
-            next.mpt_mode = content.mpt_mode_on_finish
+            next.mpt_work.mpt_value = BLANK_NODE
+            next.mpt_work.mpt_fail_lookup = 1
+            next.mpt_work.mpt_mode = content.mpt_work.mpt_mode_on_finish
             return next
         elif access == MPTAccessMode.WRITING:
             # Empty value means we can skip to the next parent, the key didn't exist, or the value is empty.
             # regardless, it will have to be overwritten by modifying the parent.
 
-            target_root = last.mpt_current_root
-            remaining_depth = content.mpt_lookup_key_nibbles - content.mpt_lookup_nibble_depth
+            target_root = last.mpt_work.mpt_current_root
+            remaining_depth = content.mpt_work.mpt_lookup_key_nibbles - content.mpt_work.mpt_lookup_nibble_depth
             # if the write is deeper than this NULL value, then place a leaf with prefix.
             if remaining_depth > 0:
                 # shift out the part that we already traversed from the top (if any)
-                target_prefix = content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)
+                target_prefix = content.mpt_work.mpt_lookup_key << (content.mpt_work.mpt_lookup_nibble_depth*4)
                 encoded_path = encode_path(target_prefix, remaining_depth, True)
                 target_root = new_2_node(encoded_path, rlp_if_bytes32(target_root))
 
-            next.mpt_current_root = target_root
+            next.mpt_work.mpt_current_root = target_root
             return next
         elif access == MPTAccessMode.DELETING:
             # bubbled up to an already empty node? Then it didn't exist, should never happen.
@@ -432,26 +432,26 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
         if access == MPTAccessMode.GRAFTING_A:
             # take path (in-between part of the graft), append the child-side of the grafting,
             # and bubble up with GRAFTING_B_terminating/continuing_child
-            prev_segment = last.mpt_graft_key_segment
-            prev_segment_nibbles = last.mpt_graft_key_nibbles
+            prev_segment = last.mpt_work.mpt_graft_key_segment
+            prev_segment_nibbles = last.mpt_work.mpt_graft_key_nibbles
             # append the path of the child we're grafting by shifting it to after the graft segment we have so far
             prev_segment |= path_u256 >> prev_segment_nibbles
-            next.mpt_graft_key_segment = prev_segment
-            next.mpt_graft_key_nibbles = prev_segment_nibbles + path_nibble_len
+            next.mpt_work.mpt_graft_key_segment = prev_segment
+            next.mpt_work.mpt_graft_key_nibbles = prev_segment_nibbles + path_nibble_len
             if terminating:
-                next.mpt_mode = MPTAccessMode.GRAFTING_B_terminating_child
+                next.mpt_work.mpt_mode = MPTAccessMode.GRAFTING_B_terminating_child
             else:
-                next.mpt_mode = MPTAccessMode.GRAFTING_B_continuing_child
+                next.mpt_work.mpt_mode = MPTAccessMode.GRAFTING_B_continuing_child
             # and don't forget to propagate the contents we're grafting
             # (we're going up, back to parent side of graft)
-            next.mpt_current_root = last.mpt_current_root
+            next.mpt_work.mpt_current_root = last.mpt_work.mpt_current_root
 
             return next
         elif access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
             terminating_child = (access == MPTAccessMode.GRAFTING_B_terminating_child)
             # take path, append it to the parent-side of the grafting
-            prev_segment = last.mpt_graft_key_segment
-            prev_segment_nibbles = last.mpt_graft_key_nibbles
+            prev_segment = last.mpt_work.mpt_graft_key_segment
+            prev_segment_nibbles = last.mpt_work.mpt_graft_key_nibbles
             # append the grafting work to the parent by shifting it to the end of the parent path
             path_u256 |= prev_segment >> path_nibble_len
             path_nibble_len += prev_segment_nibbles
@@ -459,19 +459,19 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
             # now we have a new grafted path to the child node we are grafting,
             # create the node (a leaf or extension) by bubbling it up as a write.
             new_path_encoded = encode_path(path_u256, path_nibble_len, terminating_child)
-            new_content = rlp_if_bytes32(last.mpt_current_root)
+            new_content = rlp_if_bytes32(last.mpt_work.mpt_current_root)
             new_key = new_2_node(new_path_encoded, new_content)
-            next.mpt_current_root = new_key
+            next.mpt_work.mpt_current_root = new_key
             # switch to writing, we just need to propagate the one change we made, no further grafting/deletion
-            next.mpt_mode = MPTAccessMode.WRITING
+            next.mpt_work.mpt_mode = MPTAccessMode.WRITING
 
             return next
 
-        key_remainder = content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)
-        new_depth = content.mpt_lookup_nibble_depth + path_nibble_len
+        key_remainder = content.mpt_work.mpt_lookup_key << (content.mpt_work.mpt_lookup_nibble_depth*4)
+        new_depth = content.mpt_work.mpt_lookup_nibble_depth + path_nibble_len
 
         # check we have read the full key, not more and not less
-        if new_depth == content.mpt_lookup_key_nibbles:
+        if new_depth == content.mpt_work.mpt_lookup_key_nibbles:
             # this is a key of equal length, but might not yet be it
             if key_remainder == path_u256:
                 # this is at or next to the node we are looking for!
@@ -482,16 +482,16 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                     # extensions always extend (key can match and point to a branch node that holds the value)
                     if len(data_li[1]) >= 32:
                         # It's a hashed reference, just store the hash instead of the RLP-encoded hash
-                        next.mpt_current_root = rlp_strip_length_prefix(data_li[1])
+                        next.mpt_work.mpt_current_root = rlp_strip_length_prefix(data_li[1])
                     else:
-                        next.mpt_current_root = data_li[1]
-                    next.mpt_lookup_nibble_depth = new_depth
+                        next.mpt_work.mpt_current_root = data_li[1]
+                    next.mpt_work.mpt_lookup_nibble_depth = new_depth
                     # stay in the same MPT mode, this is a new mpt_current_root to expand
                     return next
                 elif access == MPTAccessMode.WRITING:
                     # overwrite the old node value, and compute the root to bubble up the change
-                    new_key = new_2_node(data_li[0], rlp_if_bytes32(last.mpt_current_root))
-                    next.mpt_current_root = new_key
+                    new_key = new_2_node(data_li[0], rlp_if_bytes32(last.mpt_work.mpt_current_root))
+                    next.mpt_work.mpt_current_root = new_key
 
                     # stay in the same MPT mode, this is a new mpt_current_root to bubble up
                     return next
@@ -507,7 +507,7 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                     # delete the node altogether,
                     # and bubble up to delete any other nodes that would otherwise reference it as last thing.
                     trie.put_node(BLANK_NODE)
-                    next.mpt_current_root = BLANK_ROOT
+                    next.mpt_work.mpt_current_root = BLANK_ROOT
                     return next
                 else:
                     raise NotImplementedError
@@ -515,19 +515,19 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                 # this is just a sibling node with equal key length and common prefix
 
                 if access == MPTAccessMode.READING:
-                    next.mpt_fail_lookup = 2
-                    next.mpt_mode = content.mpt_mode_on_finish
+                    next.mpt_work.mpt_fail_lookup = 2
+                    next.mpt_work.mpt_mode = content.mpt_work.mpt_mode_on_finish
                     return next
                 elif access == MPTAccessMode.WRITING:
 
-                    remainder_nibble_len = content.mpt_lookup_key_nibbles - content.mpt_lookup_nibble_depth
+                    remainder_nibble_len = content.mpt_work.mpt_lookup_key_nibbles - content.mpt_work.mpt_lookup_nibble_depth
                     assert remainder_nibble_len == path_nibble_len  # sanity check
 
                     prefix_path, prefix_len = common_nibble_prefix(
                         key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
 
                     leaf_sibling = data_li[1]
-                    leaf_new = rlp_if_bytes32(last.mpt_current_root)
+                    leaf_new = rlp_if_bytes32(last.mpt_work.mpt_current_root)
 
                     # if the values do not differ only in the last nibble, they need their own node
                     if prefix_len + 1 < path_nibble_len:
@@ -549,9 +549,9 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                     if prefix_len > 0:
                         extension_path = encode_path(prefix_path, prefix_len, False)
                         extension_root = new_2_node(extension_path, rlp_if_bytes32(branch_root))
-                        next.mpt_current_root = extension_root
+                        next.mpt_work.mpt_current_root = extension_root
                     else:
-                        next.mpt_current_root = branch_root
+                        next.mpt_work.mpt_current_root = branch_root
 
                     return next
                 elif access == MPTAccessMode.DELETING:
@@ -559,18 +559,18 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                                     " the node was not present (partially common prefix)")
                 else:
                     raise NotImplementedError
-        elif new_depth < content.mpt_lookup_key_nibbles:
+        elif new_depth < content.mpt_work.mpt_lookup_key_nibbles:
             # the node we are looking for does not exist,
             # but another leaf/extension exists with a shorter key that is a prefix of our key
 
             if access == MPTAccessMode.READING:
                 if terminating:
-                    next.mpt_fail_lookup = 3
-                    next.mpt_mode = content.mpt_mode_on_finish
+                    next.mpt_work.mpt_fail_lookup = 3
+                    next.mpt_work.mpt_mode = content.mpt_work.mpt_mode_on_finish
                     return next
                 else:
                     # extension size is on-track, check if it matches
-                    key_remainder = content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)
+                    key_remainder = content.mpt_work.mpt_lookup_key << (content.mpt_work.mpt_lookup_nibble_depth*4)
                     # mask out the part of the key that should match this entry
                     mask = (uint256(1) << (path_nibble_len*4)) - 1
                     shifted_mask = mask << (256 - path_nibble_len*4)
@@ -578,8 +578,8 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
 
                     if key_part != path_u256:
                         # extension/leaf leads to some other key, not what we are looking for
-                        next.mpt_fail_lookup = 6
-                        next.mpt_mode = content.mpt_mode_on_finish
+                        next.mpt_work.mpt_fail_lookup = 6
+                        next.mpt_work.mpt_mode = content.mpt_work.mpt_mode_on_finish
                         return next
                     else:
                         # extension/leaf matches, it's on our path, we can find the node!
@@ -588,20 +588,20 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                         if len(node) >= 32:
                             node = rlp_strip_length_prefix(node)
                         # the value of the extension will be the next hashed node to expand into
-                        next.mpt_current_root = node
+                        next.mpt_work.mpt_current_root = node
 
-                        next.mpt_lookup_nibble_depth = new_depth
+                        next.mpt_work.mpt_lookup_nibble_depth = new_depth
                         # stay in the same MPT mode, this is a new mpt_current_root to expand
                         return next
             elif access == MPTAccessMode.WRITING:
-                remainder_nibble_len = content.mpt_lookup_key_nibbles - content.mpt_lookup_nibble_depth
+                remainder_nibble_len = content.mpt_work.mpt_lookup_key_nibbles - content.mpt_work.mpt_lookup_nibble_depth
                 assert path_nibble_len < remainder_nibble_len  # sanity check
 
                 prefix_path, prefix_len = common_nibble_prefix(
                     key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
 
                 target_sibling = data_li[1]
-                target_new = rlp_if_bytes32(last.mpt_current_root)
+                target_new = rlp_if_bytes32(last.mpt_work.mpt_current_root)
 
                 # if there's more than 1 nibble difference,
                 # our value needs a leaf/extension node and can't just go into the branch slot
@@ -620,9 +620,9 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                 # and if they had a common prefix, they need to get extended to
                 if prefix_len > 0:
                     extension_path = encode_path(prefix_path, prefix_len, False)
-                    next.mpt_current_root = new_2_node(extension_path, rlp_if_bytes32(branch_root))
+                    next.mpt_work.mpt_current_root = new_2_node(extension_path, rlp_if_bytes32(branch_root))
                 else:
-                    next.mpt_current_root = branch_root
+                    next.mpt_work.mpt_current_root = branch_root
 
                 return next
             elif access == MPTAccessMode.DELETING:
@@ -631,23 +631,23 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
             else:
                 raise NotImplementedError
 
-        elif new_depth > content.mpt_lookup_key_nibbles:
+        elif new_depth > content.mpt_work.mpt_lookup_key_nibbles:
             # the node we are looking for does not exist,
             # but another leaf/extension exists with a longer key of which our key is a prefix
 
             if access == MPTAccessMode.READING:
-                next.mpt_fail_lookup = 4
-                next.mpt_mode = content.mpt_mode_on_finish
+                next.mpt_work.mpt_fail_lookup = 4
+                next.mpt_work.mpt_mode = content.mpt_work.mpt_mode_on_finish
                 return next
             elif access == MPTAccessMode.WRITING:
-                remainder_nibble_len = content.mpt_lookup_key_nibbles - content.mpt_lookup_nibble_depth
+                remainder_nibble_len = content.mpt_work.mpt_lookup_key_nibbles - content.mpt_work.mpt_lookup_nibble_depth
                 assert path_nibble_len > remainder_nibble_len  # sanity check
 
                 prefix_path, prefix_len = common_nibble_prefix(
                     key_remainder, path_u256, remainder_nibble_len, path_nibble_len)
 
                 target_sibling = data_li[1]
-                target_new = rlp_if_bytes32(last.mpt_current_root)
+                target_new = rlp_if_bytes32(last.mpt_work.mpt_current_root)
 
                 # if there's more than 1 nibble difference,
                 # the other needs a leaf/extension node and can't just go into the branch slot
@@ -666,9 +666,9 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                 # and if they had a common prefix, they need to get extended to
                 if prefix_len > 0:
                     extension_path = encode_path(prefix_path, prefix_len, False)
-                    next.mpt_current_root = new_2_node(extension_path, rlp_if_bytes32(branch_root))
+                    next.mpt_work.mpt_current_root = new_2_node(extension_path, rlp_if_bytes32(branch_root))
                 else:
-                    next.mpt_current_root = branch_root
+                    next.mpt_work.mpt_current_root = branch_root
                 return next
             elif access == MPTAccessMode.DELETING:
                 raise Exception("deletion should not have been started,"
@@ -683,7 +683,7 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
             # keep the mpt_current_root, and bubble back up.
             return next
 
-        if content.mpt_lookup_nibble_depth == content.mpt_lookup_key_nibbles:
+        if content.mpt_work.mpt_lookup_nibble_depth == content.mpt_work.mpt_lookup_key_nibbles:
             # we arrived at the key depth already, there are other nodes with longer keys,
             # but we only care about the vt node (17th of branch)
 
@@ -691,18 +691,18 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                 raise Exception("invalid MPT: cannot graft child node to branch vt slot, vt is always terminal")
             if access == MPTAccessMode.READING:
                 if len(data_li[16]) >= 32:
-                    next.mpt_current_root = rlp_strip_length_prefix(data_li[16])
+                    next.mpt_work.mpt_current_root = rlp_strip_length_prefix(data_li[16])
                 else:
-                    next.mpt_current_root = data_li[16]
+                    next.mpt_work.mpt_current_root = data_li[16]
                 # stay in the same MPT mode, this is a new mpt_current_root to expand
                 return next
             elif access == MPTAccessMode.WRITING:
                 # we arrived at the key depth already, there are other nodes with longer keys,
                 # but we only care about the vt node (17th of branch)
-                data_li[16] = rlp_if_bytes32(last.mpt_current_root)
+                data_li[16] = rlp_if_bytes32(last.mpt_work.mpt_current_root)
 
                 branch_root = new_branch_node(data_li)
-                next.mpt_current_root = branch_root
+                next.mpt_work.mpt_current_root = branch_root
 
                 # stay in the same MPT mode, this is a new mpt_current_root to bubble up
                 return next
@@ -722,18 +722,18 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                         remaining_node = rlp_strip_length_prefix(remaining_node)
 
                     # visit the remaining node
-                    next.mpt_current_root = remaining_node
+                    next.mpt_work.mpt_current_root = remaining_node
 
                     # after first visiting the grafted child,
                     # immediately go to the parent (we removed this intermediate branch)
-                    next.mpt_parent_node_step.change(selector=1, value=content.mpt_parent_node_step.value())
+                    next.mpt_work.mpt_parent_node_step.change(selector=1, value=content.mpt_work.mpt_parent_node_step.value())
 
-                    next.mpt_graft_key_segment = uint256(remaining_index)
-                    next.mpt_graft_key_nibbles = 1
+                    next.mpt_work.mpt_graft_key_segment = uint256(remaining_index)
+                    next.mpt_work.mpt_graft_key_nibbles = 1
 
                     # we need to add the nibble it was located by, and the remaining node may have a deeper path.
                     # so we continue in grafting mode, and visit the child first.
-                    next.mpt_mode = MPTAccessMode.GRAFTING_A.value
+                    next.mpt_work.mpt_mode = MPTAccessMode.GRAFTING_A.value
                 else:
                     # Bubbling up.
                     assert content is not None
@@ -742,9 +742,9 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                     # and bubble up the change as a write-operation.
                     data_li[16] = BLANK_NODE
                     branch_root = new_branch_node(data_li)
-                    next.mpt_current_root = branch_root
+                    next.mpt_work.mpt_current_root = branch_root
                     # the branch stays with remaining children, switch to writing mode
-                    next.mpt_mode = MPTAccessMode.WRITING.value
+                    next.mpt_work.mpt_mode = MPTAccessMode.WRITING.value
                     return next
             else:
                 raise NotImplementedError
@@ -752,26 +752,26 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
         # if taking any other branch node value than the depth of the node itself, we go 1 nibble deeper,
         # and must not exceed the max depth (all keys are 32 bytes or less,
         # e.g. RLP-encoded receipt-trie indices as key)
-        new_depth = content.mpt_lookup_nibble_depth + 1
+        new_depth = content.mpt_work.mpt_lookup_nibble_depth + 1
         assert new_depth <= 32
 
         # get the top 4 bits, after the lookup so far
-        branch_lookup_nibble = (content.mpt_lookup_key << (content.mpt_lookup_nibble_depth*4)) >> (256 - 4)
+        branch_lookup_nibble = (content.mpt_work.mpt_lookup_key << (content.mpt_work.mpt_lookup_nibble_depth*4)) >> (256 - 4)
 
         if access == MPTAccessMode.READING:
             # new node to expand into
             node = data_li[branch_lookup_nibble]
             if len(node) >= 32:
                 node = rlp_strip_length_prefix(node)
-            next.mpt_current_root = node
-            next.mpt_lookup_nibble_depth = new_depth
+            next.mpt_work.mpt_current_root = node
+            next.mpt_work.mpt_lookup_nibble_depth = new_depth
             return next
         elif access == MPTAccessMode.WRITING:
             # new node to bubble up into
-            data_li[branch_lookup_nibble] = rlp_if_bytes32(last.mpt_current_root)
+            data_li[branch_lookup_nibble] = rlp_if_bytes32(last.mpt_work.mpt_current_root)
 
             branch_root = new_branch_node(data_li)
-            next.mpt_current_root = branch_root
+            next.mpt_work.mpt_current_root = branch_root
 
             # stay in the same MPT mode, this is a new mpt_current_root to bubble up
             return next
@@ -779,9 +779,9 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
             # A branch node has no leading path,
             # we can just continue to step B of grafting, the graft-path stays the same,
             # and this branch node is grafted to the parent of the branch we omitted.
-            next.mpt_graft_key_segment = last.mpt_graft_key_segment
-            next.mpt_graft_key_nibbles = last.mpt_graft_key_nibbles
-            next.mpt_mode = MPTAccessMode.GRAFTING_B_continuing_child  # a branch node is never terminating
+            next.mpt_work.mpt_graft_key_segment = last.mpt_work.mpt_graft_key_segment
+            next.mpt_work.mpt_graft_key_nibbles = last.mpt_work.mpt_graft_key_nibbles
+            next.mpt_work.mpt_mode = MPTAccessMode.GRAFTING_B_continuing_child  # a branch node is never terminating
             return next
 
         elif access == MPTAccessMode.GRAFTING_B_terminating_child or access == MPTAccessMode.GRAFTING_B_continuing_child:
@@ -790,12 +790,12 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
             # create leaf/extension node
             terminating_child = (access == MPTAccessMode.GRAFTING_B_terminating_child)
             # take path, append it to the parent-side of the grafting
-            graft_path = last.mpt_graft_key_segment
-            graft_path_nibbles = last.mpt_graft_key_nibbles
+            graft_path = last.mpt_work.mpt_graft_key_segment
+            graft_path_nibbles = last.mpt_work.mpt_graft_key_nibbles
             # can only be 0 if it were a vt node, but we turn those in writes, not grafts.
             assert graft_path_nibbles > 0
             new_path_encoded = encode_path(graft_path, graft_path_nibbles, terminating_child)
-            new_content = rlp_if_bytes32(last.mpt_current_root)
+            new_content = rlp_if_bytes32(last.mpt_work.mpt_current_root)
             new_key = new_2_node(new_path_encoded, new_content)
 
             # write the new node into the place of the old branch
@@ -803,10 +803,10 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
 
             # and bubble up the updated branch
             branch_root = new_branch_node(data_li)
-            next.mpt_current_root = branch_root
+            next.mpt_work.mpt_current_root = branch_root
 
             # switch to writing, we just need to propagate the one change we made, no further grafting/deletion
-            next.mpt_mode = MPTAccessMode.WRITING
+            next.mpt_work.mpt_mode = MPTAccessMode.WRITING
             return next
         elif access == MPTAccessMode.DELETING:
             # if we entered a branch node on the path to our node, but didn't reach our node,
@@ -837,11 +837,11 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                     next = content.copy()
 
                     # write the remaining node
-                    next.mpt_current_root = remaining_node
+                    next.mpt_work.mpt_current_root = remaining_node
 
                     # Remaining node has no prefix (vt cannot be a leaf/extension node),
                     # So we can just substitute the branch node with the vt node by continuing in writing mode
-                    next.mpt_mode = MPTAccessMode.WRITING
+                    next.mpt_work.mpt_mode = MPTAccessMode.WRITING
 
                     return next
                 else:
@@ -849,18 +849,18 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                     next = last.copy()
 
                     # visit the remaining node
-                    next.mpt_current_root = remaining_node
+                    next.mpt_work.mpt_current_root = remaining_node
 
                     # after first visiting the grafted child,
                     # immediately go to the parent (we removed this intermediate branch)
-                    next.mpt_parent_node_step.change(selector=1, value=content.mpt_parent_node_step.value())
+                    next.mpt_work.mpt_parent_node_step.change(selector=1, value=content.mpt_work.mpt_parent_node_step.value())
 
-                    next.mpt_graft_key_segment = uint256(remaining_index)
-                    next.mpt_graft_key_nibbles = 1
+                    next.mpt_work.mpt_graft_key_segment = uint256(remaining_index)
+                    next.mpt_work.mpt_graft_key_nibbles = 1
 
                     # we need to add the nibble it was located by, and the remaining node may have a deeper path.
                     # so we continue in grafting mode, and visit the child first.
-                    next.mpt_mode = MPTAccessMode.GRAFTING_A.value
+                    next.mpt_work.mpt_mode = MPTAccessMode.GRAFTING_A.value
 
                     return next
             else:
@@ -872,9 +872,9 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                 # and bubble up the change as a write-operation.
                 data_li[branch_lookup_nibble] = BLANK_NODE
                 branch_root = new_branch_node(data_li)
-                next.mpt_current_root = branch_root
+                next.mpt_work.mpt_current_root = branch_root
                 # the branch stays with remaining children, switch to writing mode
-                next.mpt_mode = MPTAccessMode.WRITING.value
+                next.mpt_work.mpt_mode = MPTAccessMode.WRITING.value
                 return next
         else:
             raise NotImplementedError
@@ -883,13 +883,13 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
 # TODO: init claim with mpt_current_root set to state-root (or account storage root)
 def mpt_work_proc(trac: StepsTrace) -> Step:
     last = trac.last()
-    mpt_mode = MPTAccessMode(last.mpt_mode.value)
+    mpt_mode = MPTAccessMode(last.mpt_work.mpt_mode.value)
 
-    trie_src = MPTTreeSource(last.mpt_tree_source)
+    trie_src = MPTTreeSource(last.mpt_work.mpt_tree_source)
     if trie_src == MPTTreeSource.WORLD_ACCOUNTS:
         trie = trac.world_accounts()
     elif trie_src == MPTTreeSource.ACCOUNT_STORAGE:
-        addr = Address.from_b32(last.mpt_start_reference)
+        addr = Address.from_b32(last.mpt_work.mpt_start_reference)
         trie = trac.account_storage(addr)
     else:
         # TODO: support transactions and receipts
@@ -901,25 +901,25 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
     if mpt_mode == MPTAccessMode.STARTING_READ:
         next = last.copy()
         # TODO: maybe assert we set the read arguments correctly?
-        next.mpt_mode = MPTAccessMode.READING.value
-        next.mpt_mode_on_finish = MPTAccessMode.RETURNING_READ.value
+        next.mpt_work.mpt_mode = MPTAccessMode.READING.value
+        next.mpt_work.mpt_mode_on_finish = MPTAccessMode.RETURNING_READ.value
         return next
 
     if mpt_mode == MPTAccessMode.STARTING_WRITE:  # writing start (value to be mapped to node root)
         next = last.copy()
-        if len(last.mpt_value) >= 32:
-            next.mpt_write_root = mpt_hash(last.mpt_value)
+        if len(last.mpt_work.mpt_value) >= 32:
+            next.mpt_work.mpt_write_root = mpt_hash(last.mpt_work.mpt_value)
         else:
-            next.mpt_write_root = last.mpt_value
-        next.mpt_mode = MPTAccessMode.READING.value  # continue to preparation reading
-        next.mpt_mode_on_finish = MPTAccessMode.READY_WRITE.value  # return to writer value injection
+            next.mpt_work.mpt_write_root = last.mpt_work.mpt_value
+        next.mpt_work.mpt_mode = MPTAccessMode.READING.value  # continue to preparation reading
+        next.mpt_work.mpt_mode_on_finish = MPTAccessMode.READY_WRITE.value  # return to writer value injection
         return next
 
     if mpt_mode == MPTAccessMode.STARTING_DELETE:
         next = last.copy()
         # TODO: maybe assert we set the deletion arguments correctly?
-        next.mpt_mode = MPTAccessMode.READING.value  # continue to preparation reading
-        next.mpt_mode_on_finish = MPTAccessMode.READY_DELETE.value  # return to deletion pivot
+        next.mpt_work.mpt_mode = MPTAccessMode.READING.value  # continue to preparation reading
+        next.mpt_work.mpt_mode_on_finish = MPTAccessMode.READY_DELETE.value  # return to deletion pivot
         return next
 
     if mpt_mode == MPTAccessMode.READY_WRITE:
@@ -928,9 +928,9 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
 
         # TODO: handle read fail
 
-        next.mpt_current_root = last.mpt_write_root
-        next.mpt_mode = MPTAccessMode.WRITING.value  # continue to writing
-        next.mpt_mode_on_finish = MPTAccessMode.RETURNING_WRITE.value  # once done bubbling up, return
+        next.mpt_work.mpt_current_root = last.mpt_work.mpt_write_root
+        next.mpt_work.mpt_mode = MPTAccessMode.WRITING.value  # continue to writing
+        next.mpt_work.mpt_mode_on_finish = MPTAccessMode.RETURNING_WRITE.value  # once done bubbling up, return
         return next
 
     if mpt_mode == MPTAccessMode.READY_DELETE:
@@ -939,8 +939,8 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
 
         # TODO: handle read fail
 
-        next.mpt_mode = MPTAccessMode.DELETING.value  # continue to deleting
-        next.mpt_mode_on_finish = MPTAccessMode.RETURNING_DELETE.value  # once done bubbling up, return
+        next.mpt_work.mpt_mode = MPTAccessMode.DELETING.value  # continue to deleting
+        next.mpt_work.mpt_mode_on_finish = MPTAccessMode.RETURNING_DELETE.value  # once done bubbling up, return
         return next
 
     if mpt_mode == MPTAccessMode.RETURNING_READ:  # returning, back to MPT user
@@ -949,9 +949,9 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
         next = caller.copy()
         # TODO: handle read fail
         # remember the value we read
-        next.mpt_value = last.mpt_value
+        next.mpt_work.mpt_value = last.mpt_work.mpt_value
         # and that we returned
-        next.mpt_mode = MPTAccessMode.DONE.value
+        next.mpt_work.mpt_mode = MPTAccessMode.DONE.value
         return next
 
     if mpt_mode == MPTAccessMode.RETURNING_WRITE:
@@ -960,9 +960,9 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
         next = caller.copy()
         # remember the new MPT root (or any root in the path, if write failed)
         # TODO: handle write fail
-        next.mpt_current_root = last.mpt_current_root
+        next.mpt_work.mpt_current_root = last.mpt_work.mpt_current_root
         # and that we are done
-        next.mpt_mode = MPTAccessMode.DONE.value
+        next.mpt_work.mpt_mode = MPTAccessMode.DONE.value
         return next
 
     if mpt_mode == MPTAccessMode.RETURNING_DELETE:
@@ -971,9 +971,9 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
         next = caller.copy()
         # remember the new MPT root (or any root in the path, if deletion failed)
         # TODO: handle delete fail
-        next.mpt_current_root = last.mpt_current_root
+        next.mpt_work.mpt_current_root = last.mpt_work.mpt_current_root
         # and that we are done
-        next.mpt_mode = MPTAccessMode.DONE.value
+        next.mpt_work.mpt_mode = MPTAccessMode.DONE.value
         return next
 
     raise Exception("unexpected MPT mode: %d" % mpt_mode)

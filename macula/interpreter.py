@@ -74,14 +74,14 @@ def exec_call_pre(trac: StepsTrace) -> Step:
     next = last.copy()
 
     # increment call depth
-    call_depth = last.call_depth
-    next.call_depth = call_depth + 1
+    call_depth = last.contract.call_depth
+    next.contract.call_depth = call_depth + 1
     # reset return data, stack, memory, PC, and more
     # The caller must set the input-data and code.
-    next.ret_data = ReturnData()
-    next.stack = Stack()
-    next.memory = Memory()
-    next.pc = 0
+    next.contract.ret_data = ReturnData()
+    next.contract.stack = Stack()
+    next.contract.memory = Memory()
+    next.contract.pc = 0
     next.exec_mode = ExecMode.OpcodeLoad.value
     return next
 
@@ -95,8 +95,8 @@ def exec_call_post(trac: StepsTrace) -> Step:
     # Next step is a lot like the caller, but we preserve the return data, return unused gas, and preserve the state
     # TODO maybe also track past log events, to reconstruct receipt root for block fraud proof
     next.state_root = last.state_root
-    next.ret_data = last.ret_data
-    next.return_gas(last.gas)
+    next.contract.ret_data = last.contract.ret_data
+    next.contract.return_gas(last.contract.gas)
 
     # Continue processing in caller, exactly where we left of, next opcode
     next.exec_mode = ExecMode.OpcodeLoad.value
@@ -107,8 +107,8 @@ def exec_opcode_load(trac: StepsTrace) -> Step:
     # To avoid reading the code every slot, we just cache the current opcode
     last = trac.last()
     next = last.copy()
-    op = last.code.get_op(last.pc)
-    next.op = op.byte()
+    op = last.contract.code.get_op(last.contract.pc)
+    next.contract.op = op.byte()
     next.exec_mode = ExecMode.ValidateStack.value
     return next
 
@@ -116,8 +116,8 @@ def exec_opcode_load(trac: StepsTrace) -> Step:
 def exec_validate_stack(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    stack_len = len(last.stack)
-    operation = operation_info(last.op, last.block_number)
+    stack_len = len(last.contract.stack)
+    operation = operation_info(last.contract.op, last.block.block_number)
     # ensure there are enough stack items available to perform the operation
     if stack_len < operation.min_stack:
         next.exec_mode = ExecMode.ErrStackUnderflow.value
@@ -139,14 +139,14 @@ def exec_read_only_check(trac: StepsTrace) -> Step:
     # for a call operation is the value. Transferring value from one
     # account to the others means the state is modified and should also
     # return with an error.
-    if last.read_only:
-        op = last.op
-        operation = operation_info(last.op, last.block_number)
+    if last.contract.read_only:
+        op = last.contract.op
+        operation = operation_info(last.contract.op, last.block.block_number)
         if operation.writes:
             next.exec_mode = ExecMode.ErrWriteProtection.value
             return next
         if op == OpCode.CALL:
-            value = last.stack.back_b32(2)
+            value = last.contract.stack.back_b32(2)
             if value != Bytes32():
                 next.exec_mode = ExecMode.ErrWriteProtection.value
                 return next
@@ -158,9 +158,9 @@ def exec_read_only_check(trac: StepsTrace) -> Step:
 def exec_constant_gas(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    operation = operation_info(last.op, last.block_number)
+    operation = operation_info(last.contract.op, last.block.block_number)
     # Static portion of gas
-    if not next.use_gas(operation.constant_gas):
+    if not next.contract.use_gas(operation.constant_gas):
         next.exec_mode = ExecMode.ErrOutOfGas.value
         return next
     # Continue interpreter to next step
@@ -171,14 +171,14 @@ def exec_constant_gas(trac: StepsTrace) -> Step:
 def exec_calc_memory_size(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    operation = operation_info(last.op, last.block_number)
+    operation = operation_info(last.contract.op, last.block.block_number)
     memory_size = 0
     # calculate the new memory size and expand the memory to fit
     # the operation
     # Memory check needs to be done prior to evaluating the dynamic gas portion,
     # to detect calculation overflows
     if operation.memory_size is not None:
-        mem_op, overflow = operation.memory_size(last.stack)
+        mem_op, overflow = operation.memory_size(last.contract.stack)
         if overflow:
             next.exec_mode = ExecMode.ErrGasUintOverflow.value
             return next
@@ -188,14 +188,14 @@ def exec_calc_memory_size(trac: StepsTrace) -> Step:
             next.exec_mode = ExecMode.ErrGasUintOverflow.value
             return next
 
-    next.memory_desired = memory_size
+    next.contract.memory_desired = memory_size
     next.exec_mode = ExecMode.DynamicGas.value
     return next
 
 
 def exec_dynamic_gas(trac: StepsTrace) -> Step:
     last = trac.last()
-    operation = operation_info(last.op, last.block_number)
+    operation = operation_info(last.contract.op, last.block.block_number)
     if operation.dynamic_gas is not None:
         # Dynamic gas is complex, it steals the step to deal with it,
         # and optionally require more steps before interpreter continuation
@@ -209,8 +209,8 @@ def exec_dynamic_gas(trac: StepsTrace) -> Step:
 def exec_update_memory_size(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    memory_size = last.memory_desired
-    m_length = len(next.memory)
+    memory_size = last.contract.memory_desired
+    m_length = len(next.contract.memory)
     if m_length >= memory_size:
         # no extension to do
         next.exec_mode = ExecMode.OpcodeRun.value
@@ -219,13 +219,13 @@ def exec_update_memory_size(trac: StepsTrace) -> Step:
     # Otherwise just align by adding a byte, or finishing trailing non-aligning bytes.
     if (memory_size-m_length >= 32) and (m_length % 32 == 0):
         memory_size += 32
-        next.memory.append_zero_32_bytes()
+        next.contract.memory.append_zero_32_bytes()
     else:
         memory_size += 1
-        next.memory.append(uint8(0))
+        next.contract.memory.append(uint8(0))
 
     # check if we can exit the memory extension step repeat already
-    if len(next.memory) >= memory_size:
+    if len(next.contract.memory) >= memory_size:
         # no extension to do
         next.exec_mode = ExecMode.OpcodeRun.value
         return next
@@ -238,7 +238,7 @@ def exec_update_memory_size(trac: StepsTrace) -> Step:
 def exec_opcode_run(trac: StepsTrace) -> Step:
     # when done running, continue with ExecOpcodeLoad. Or any error
     last = trac.last()
-    operation = operation_info(last.op, last.block_number)
+    operation = operation_info(last.contract.op, last.block.block_number)
     return operation.proc(trac)
 
 
@@ -250,7 +250,7 @@ def exec_error(trac: StepsTrace) -> Step:
     next = last.copy()
     # if not a natural revert, then consume all gas.
     if last.exec_mode != ExecMode.ErrExecutionReverted.value:
-        next.gas = 0
+        next.contract.gas = 0
 
     # TODO: if a revert, then complete the call (without preserving state-root),
     #  preserve consumed gas, and return data
