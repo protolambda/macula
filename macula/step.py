@@ -328,19 +328,19 @@ class StateWork_CreateAccount(Container):
 
 class StateWork_GetBalance(Container):
     address: Address
-    value_result: uint256
+    balance_result: uint256
 
 class StateWork_SetBalance(Container):
     address: Address
-    value: uint256
+    balance: uint256
 
 class StateWork_SubBalance(Container):
     address: Address
-    sub_value: uint256
+    sub_balance: uint256
 
 class StateWork_AddBalance(Container):
     address: Address
-    add_value: uint256
+    add_balance: uint256
 
 class StateWork_GetContractCodeHash(Container):
     address: Address

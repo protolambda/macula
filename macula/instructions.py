@@ -318,8 +318,27 @@ def op_address(trac: StepsTrace) -> Step:
 
 
 def op_balance(trac: StepsTrace) -> Step:
-    # TODO MPT hell
-    raise NotImplementedError
+    last = trac.last()
+    next = last.copy()
+    # Do we have the balance yet?
+    if last.state_work.mode == StateWorkMode.RETURNED:
+        last.state_work.mode = StateWorkMode.IDLE.value  # kindly reset the mode, to not mess up future uses.
+        value: StateWork_GetBalance = last.state_work.work.value()
+        # Overwrite the address argument with the result
+        next.contract.stack.tweak_u256(uint256(value.balance_result))
+        return progress(next)
+    else:
+        assert last.state_work.mode == StateWorkMode.IDLE
+        addr = Address.from_b32(last.contract.stack.peek_b32())
+        next.state_work.mode = StateWorkMode.REQUESTING.value
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED.value
+        next.state_work.work.change(
+            selector=StateWorkType.GET_BALANCE.value,
+            value=StateWork_GetBalance(address=addr)
+        )
+        next.return_to_step.change(selector=1, value=last)
+        next.exec_mode = ExecMode.StateWork.value
+        return next
 
 
 def op_origin(trac: StepsTrace) -> Step:
@@ -476,8 +495,25 @@ def op_return_data_copy(trac: StepsTrace) -> Step:
 def op_ext_code_size(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    # Do we have the size yet?
+    if last.state_work.mode == StateWorkMode.RETURNED:
+        last.state_work.mode = StateWorkMode.IDLE.value  # kindly reset the mode, to not mess up future uses.
+        value: StateWork_GetContractCodeSize = last.state_work.work.value()
+        # Overwrite the address argument with the result
+        next.contract.stack.tweak_u256(uint256(value.size))
+        return progress(next)
+    else:
+        assert last.state_work.mode == StateWorkMode.IDLE
+        addr = Address.from_b32(last.contract.stack.peek_b32())
+        next.state_work.mode = StateWorkMode.REQUESTING.value
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED.value
+        next.state_work.work.change(
+            selector=StateWorkType.GET_CONTRACT_CODE_SIZE.value,
+            value=StateWork_GetContractCodeSize(address=addr)
+        )
+        next.return_to_step.change(selector=1, value=last)
+        next.exec_mode = ExecMode.StateWork.value
+        return next
 
 
 def op_code_size(trac: StepsTrace) -> Step:
@@ -654,14 +690,53 @@ def op_mstore8(trac: StepsTrace) -> Step:
 def op_sload(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    # Do we have the storage value yet?
+    if last.state_work.mode == StateWorkMode.RETURNED:
+        last.state_work.mode = StateWorkMode.IDLE.value  # kindly reset the mode, to not mess up future uses.
+        value: StateWork_StorageRead = last.state_work.work.value()
+        # Overwrite the address argument with the result
+        next.contract.stack.tweak_b32(value.value_result)
+        return progress(next)
+    else:
+        assert last.state_work.mode == StateWorkMode.IDLE
+        storage_hash = last.contract.stack.peek_b32()
+        next.state_work.mode = StateWorkMode.REQUESTING.value
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED.value
+        next.state_work.work.change(
+            selector=StateWorkType.STORAGE_READ.value,
+            value=StateWork_StorageRead(address=last.contract.code_addr, key=storage_hash)
+        )
+        next.return_to_step.change(selector=1, value=last)
+        next.exec_mode = ExecMode.StateWork.value
+        return next
+
 
 def op_sstore(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    # Have we written the storage value yet?
+    if last.state_work.mode == StateWorkMode.RETURNED:
+        last.state_work.mode = StateWorkMode.IDLE.value  # kindly reset the mode, to not mess up future uses.
+        # The state-root was updated by the state-work, we can progress to next instruction now
+        return progress(next)
+    else:
+        assert last.state_work.mode == StateWorkMode.IDLE
+        storage_pos = last.contract.stack.back_b32(0)
+        storage_val = last.contract.stack.back_b32(1)
+
+        next.state_work.mode = StateWorkMode.REQUESTING.value
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED.value
+        next.state_work.work.change(
+            selector=StateWorkType.STORAGE_WRITE.value,
+            value=StateWork_StorageWrite(
+                address=last.contract.code_addr,
+                key=storage_pos,
+                value=storage_val,
+            )
+        )
+        next.return_to_step.change(selector=1, value=last)
+        next.exec_mode = ExecMode.StateWork.value
+        return next
 
 
 def op_jump(trac: StepsTrace) -> Step:
