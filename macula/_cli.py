@@ -1,10 +1,12 @@
 import click
-from typing import List
+from typing import List, BinaryIO
 from .exec_mode import ExecMode, exec_is_done
-from .step import Step, Address, Bytes32
-from .capture import CaptureTrace, ExternalSource
+from .step import Step
+from .capture import CaptureTrace
 from .interpreter import next_step
 from .witness import TraceWitnessData, StepAccessList
+from .external import HttpSource
+from .tx import load_tx
 from remerkleable.tree import PairNode
 import json
 
@@ -16,32 +18,36 @@ def cli():
     """
 
 
-class HttpSource(ExternalSource):
-    # TODO: http client
-    def get_acc_storage_node(self, addr: Address, key: Bytes32) -> bytes:
-        ...
-    def get_world_node(self, key: Bytes32) -> bytes:
-        ...
-    def get_code(self, code_hash: Bytes32) -> bytes:
-        ...
-
-
 # TODO: when to shut down the tracer, just in case of unexpected loop?
 SANITY_LIMIT = 10000
 
 
 @cli.command()
-def gen():
-    click.echo('generating fraud proof')
-    # TODO
-    src = HttpSource()
+@click.argument('output', type=click.File('wb'))
+@click.argument('api', type=click.STRING, help="API endpoint to fetch state trie and contract code from")
+@click.argument('tx', type=click.STRING, help="RLP encoded transaction, hex")  # TODO: replace with full RLP encoded block
+def gen(output: BinaryIO, api: str, tx: str):
+    """Generate a fraud proof for the given transaction"""
 
-    init_step = Step()
+    click.echo("preparing trace...")
+    src = HttpSource(api)
     trac = CaptureTrace(src)
+
+    click.echo("decoding transaction: "+tx)
+    if tx.startswith("0x"):
+        tx = tx[2:]
+
+    tx_bytes = bytes.fromhex(tx)
+
+    click.echo("loading first step...")
+    init_step = Step()
+    load_tx(init_step, tx_bytes)  # TODO: we only load a single tx, not a full block yet
     trac.add_step(init_step)
 
+    click.echo("running step by step proof generator...")
     n = 0
     while True:
+        click.echo("\rProcessing step %d" % n, nl=False)
         n += 1
 
         if n >= SANITY_LIMIT:
@@ -61,6 +67,8 @@ def gen():
         if exec_is_done(mode):
             break
 
+    click.echo("generated %d steps!" % n)
+
     if len(trac.step_trace) != len(trac.access_trace):
         raise Exception("steps and access count different: %d <> %d" % (len(trac.step_trace), len(trac.access_trace)))
 
@@ -78,8 +86,12 @@ def gen():
         if not right.is_leaf():
             store_tree(right)
 
+    click.echo("formatting witness data...")
+
     access_per_step: List[StepAccessList] = []
     for i in range(n):
+        click.echo("\rProcessing step witness %d" % n, nl=False)
+
         step = trac.step_trace[i]
         acc_li = trac.access_trace[i]
 
@@ -108,19 +120,27 @@ def gen():
         steps=access_per_step,
     )
 
-    # TODO: use click file option flag (can also write to stdout with special flag value)
-    click.echo(json.dumps(trac_witness))
+    click.echo("writing witness data...")
+    json.dump(trac_witness, output)
+    click.echo("done!")
 
 
 @cli.command()
-def step_witness():
+@click.argument('input', type=click.File('rb'))
+@click.argument('output', type=click.File('wb'))
+@click.argument('step', type=click.INT)
+def step_witness(input: BinaryIO, step: int, output: BinaryIO):
     """Compute the witness data for a single step by index, using the full trace witness"""
-    # TODO: load TraceWitnessData, run trace_witness.get_step_witness(i), dump output
-    ...
+    obj = json.load(input)
+    trace_witness_data = TraceWitnessData(**obj)
+    step_witness_data = trace_witness_data.get_step_witness(step)
+    json.dump(step_witness_data, output)
 
 
 @cli.command()
 def verify():
-    """Verify the execution of a step by providing the witness data and computing the step output"""
+    """Verify the execution of a step
+    \f
+    by providing the witness data and computing the step output"""
     click.echo('verifying fraud proof')
     # TODO

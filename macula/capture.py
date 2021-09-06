@@ -1,19 +1,11 @@
-from typing import Dict, Callable, List, Set, Protocol, TypedDict
+from typing import Dict, Callable, List, Set
 from remerkleable.tree import Gindex
 from .step import Step, Bytes32, Address
 from .trace import StepsTrace
 from . import keccak_256
 from .node_shim import ShimNode
 from .mpt_work import MPT
-
-
-class ExternalSource(Protocol):
-    def get_acc_storage_node(self, addr: Address, key: Bytes32) -> bytes:
-        ...
-    def get_world_node(self, key: Bytes32) -> bytes:
-        ...
-    def get_code(self, code_hash: Bytes32) -> bytes:
-        ...
+from .external import ExternalSource
 
 
 class CaptureMPT(MPT):

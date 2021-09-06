@@ -1,9 +1,10 @@
 from enum import Enum
 
+
 class ExecMode(Enum):
     BlockPre = 0
 
-    TxInclusion = 0x01
+    TxLoad = 0x01
     TxSig = 0x02
     TxFeesPre = 0x03
     TxFeesPost = 0x04
@@ -38,16 +39,20 @@ class ExecMode(Enum):
     ErrInsufficientBalance = 0x49
     ErrExecutionReverted = 0x4a
 
+    ErrInvalidTransactionType = 0x50
+    ErrInvalidTransactionChain = 0x51
+    ErrInvalidTransactionSig = 0x52
+
     # Special state machines
-    StateWork = 0x50
-    MPTWork = 0x51
+    StateWork = 0x60
+    MPTWork = 0x61
 
     # When completely done, and the tx was applied successfully
     Success = 0xff
 
 
 # incl. start, incl. end
-exec_mode_err_range = (0x40, 0x4f)
+exec_mode_err_range = (0x40, 0x5f)
 
 
 def exec_is_done(mode: ExecMode) -> bool:
