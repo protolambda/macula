@@ -21,8 +21,18 @@ setup(
         "testing": ["pytest"],
         "linting": ["flake8", "mypy"],
     },
-    install_requires=["remerkleable"],
+    install_requires=[
+        "remerkleable==0.1.24",
+        "rlp",
+        "ethereum",
+        "Click",
+    ],
     include_package_data=True,
+    entry_points={
+        'console_scripts': [
+            'macula = macula._cli:cli',
+        ],
+    },
     keywords=["optimistic", "rollup", "optimism", "fraud-proof", "evm", "ethereum"],
     classifiers=[
         "Development Status :: 4 - Beta",
