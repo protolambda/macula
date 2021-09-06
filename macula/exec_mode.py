@@ -42,5 +42,13 @@ class ExecMode(Enum):
     StateWork = 0x50
     MPTWork = 0x51
 
+    # When completely done, and the tx was applied successfully
+    Success = 0xff
 
+
+# incl. start, incl. end
 exec_mode_err_range = (0x40, 0x4f)
+
+
+def exec_is_done(mode: ExecMode) -> bool:
+    return mode == ExecMode.Success or (exec_mode_err_range[0] <= mode.value <= exec_mode_err_range[1])

@@ -22,7 +22,7 @@ class TestMPT(MPT):
     def __init__(self):
         self.trie = Trie(EphemDB())
 
-    def get_node(self, key: bytes) -> bytes:
+    def get_node(self, key: Bytes32) -> bytes:
         db: EphemDB = self.trie.db
         return db.get(key)
 
@@ -36,7 +36,7 @@ class TestMPT(MPT):
         return self.trie.root_hash
 
     # creates new nodes from root to value at key
-    def insert(self, key: bytes, value: bytes):
+    def insert(self, key: Bytes32, value: bytes):
         self.trie.update(key, value)
 
 
