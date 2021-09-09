@@ -27,7 +27,7 @@ def next_step(trac: StepsTrace) -> Step:
 
     if mode == ExecMode.BlockPre:
         raise NotImplementedError  # TODO block init work
-    if mode == ExecMode.TxInclusion:
+    if mode == ExecMode.TxLoad:
         raise NotImplementedError  # TODO: check transaction is included, check fee params, signature validity, etc.
     if mode == ExecMode.TxSig:
         raise NotImplementedError  # TODO signatures
