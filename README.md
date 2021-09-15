@@ -13,7 +13,7 @@ Q: Difference with Arbitrum AVM?
 A: Also interactive fraud proof, but no AVM extras, no compiler, simplicity first.
 Maintain 1:1 EVM for tooling ease and hopeful for later L1 non-interactive replacement.
 
-Q: Why is it named Mucula?
+Q: Why is it named Macula?
 A: The [Macula](https://en.wikipedia.org/wiki/Macula_of_retina) is the spot of the retina for color vision.
 No optimism without color, no proof without optical vision. 
 
