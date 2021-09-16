@@ -3,6 +3,7 @@ from typing import Dict, List, TypedDict
 
 class StepWitnessData(TypedDict):
     root: str
+    expected_next_root: str
     # Code is referenced by keccak256 hash in the account value, thus needs a witness.
     # 32 bytes -> bytes  (key and values are 0x prefixed + hex encoded)
     code_by_hash: Dict[str, str]
@@ -26,6 +27,8 @@ class StepAccessList(TypedDict):
     # Code-hashes that were accessed
     accessed_code_hashes: List[str]
 
+    # TODO: support block header witness data
+
 
 # This is JSON object that the fraud-proof generator outputs.
 # It represents all witness data of the trace, in a compressed form.
@@ -42,6 +45,7 @@ class TraceWitnessData(TypedDict):
     steps: List[StepAccessList]
 
     def get_step_witness(self, i: int) -> StepWitnessData:
+
         step_acc_li = self.steps[i]
 
         root = step_acc_li['root']
@@ -54,7 +58,10 @@ class TraceWitnessData(TypedDict):
             if i == 1:
                 return root
 
-            pivot = 1 << (i.bit_length() - 1)
+            if root not in bin_db:
+                raise Exception("this should be 1")
+
+            pivot = 1 << (i.bit_length() - 2)
             go_right = i & pivot != 0
             # mask out the top bit, and set the new top bit
             child = (i | pivot) - (pivot << 1)
@@ -67,8 +74,10 @@ class TraceWitnessData(TypedDict):
         contents = {g: retrieve_node_by_gindex(int.from_bytes(bytes.fromhex(g[2:]), byteorder='big'), root)
                     for g in step_acc_li['accessed_gindices']}
 
+        post_root = self.steps[i+1]['root']
         return StepWitnessData(
             root=root,
+            expected_next_root=post_root,
             code_by_hash=code_by_hash,
             mpt_node_by_hash=mpt_node_by_hash,
             contents=contents,

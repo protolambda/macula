@@ -822,12 +822,12 @@ def op_call(trac: StepsTrace) -> Step:
     # 5: return offset
     # 6: return size
 
-    part = last.contract.sub_index
+    part = last.sub_index
 
     # Part 0: reset the input
     if part == 0:
         next.contract.input = Input()
-        next.contract.sub_index = 1
+        next.sub_index = 1
         return next
 
     # Part 1: load memory into the input, in small steps. A.k.a. the call arguments.
@@ -852,7 +852,7 @@ def op_call(trac: StepsTrace) -> Step:
             next.contract.stack.tweak_back_u256(in_size-delta, 4)
             next.contract.stack.tweak_back_u256(in_offset+delta, 3)
 
-        next.contract.sub_index = 2
+        next.sub_index = 2
         return next
 
     # part 2: gas stipend
@@ -865,7 +865,7 @@ def op_call(trac: StepsTrace) -> Step:
             gas += CALL_STIPEND
 
         next.contract.stack.tweak_back_u256(gas, 0)
-        next.contract.sub_index = 3
+        next.sub_index = 3
         return next
 
     # part 3: Fail if we're trying to execute above the call depth limit
@@ -885,7 +885,7 @@ def op_call(trac: StepsTrace) -> Step:
             if amount < value:
                 next.exec_mode = ExecMode.ErrInsufficientBalance.value
                 return next
-        next.contract.sub_index = 6
+        next.sub_index = 6
         return next
 
     # Part 6: Check if account exists, and not a precompile
@@ -898,36 +898,36 @@ def op_call(trac: StepsTrace) -> Step:
         #  - don't run the call if 0 value and not a precompile
         #  - create account otherwise
 
-        next.contract.sub_index = 7
+        next.sub_index = 7
         return next
 
     # Part 7: transfer value from caller to receiver address
     if part == 7:
         addr = last.contract.code_addr
         # TODO: probably need to split up the transfer in read+write, twice
-        next.contract.sub_index = 8
+        next.sub_index = 8
         return next
 
     if part == 8:
         # TODO: check if precompile, continue with 9 or 10
-        next.contract.sub_index = 9
+        next.sub_index = 9
         return next
 
     if part == 9:
         # running a precompile
         # TODO steps
-        next.contract.sub_index = 12
+        next.sub_index = 12
         return next
 
     if part == 10:
         # running a regular contract, first retrieve the code
-        next.contract.sub_index = 11
+        next.sub_index = 11
         # TODO: load code hash from account
         # TODO: verify code witness with code hash
         return next
 
     if part == 11:
-        next.contract.sub_index = 12
+        next.sub_index = 12
         # if 0 length code, just don't run anything
         if len(last.contract.code) != 0:
             next.contract.to = Address.from_b32(last.contract.stack.back_b32(1))
@@ -945,7 +945,7 @@ def op_call(trac: StepsTrace) -> Step:
         # TODO: depending on call result, push 0 or 1 to the stack
 
         # and reset the sub-index
-        next.contract.sub_index = 0
+        next.sub_index = 0
         # continue with next opcode now that the call is done
         return progress(next)
 

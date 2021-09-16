@@ -45,18 +45,22 @@ class StepAccessedKeys(object):
     accessed_acc_storage_mpt_nodes: Dict[Address, Set[Bytes32]]
     # Code-hashes that were accessed
     accessed_codes: Set[Bytes32]
+    # block headers that were accessed, by hash
+    block_headers: Set[Bytes32]
 
     def __init__(self):
         self.step_gindices = set()
         self.accessed_world_mpt_nodes = set()
         self.accessed_acc_storage_mpt_nodes = dict()
         self.accessed_codes = set()
+        self.block_headers = set()
 
 
 class CaptureTrace(StepsTrace):
     world_mpt: CaptureMPT
     acc_mpt_dict: Dict[Address, CaptureMPT]  # only contracts have an entry here
     codes: Dict[Bytes32, bytes]
+    headers: Dict[Bytes32, bytes]
 
     # per step, track which contents were accessed (may recurse into embedded step)
     access_trace: List[StepAccessedKeys]
@@ -68,12 +72,22 @@ class CaptureTrace(StepsTrace):
         self.world_mpt = CaptureMPT(src.get_world_node, self.on_world_access)
         self.acc_mpt_dict = dict()
         self.codes = dict()
+        self.headers = dict()
         self.step_trace = []
         self.access_trace = []
         self.src = src
 
     def on_world_access(self, key: Bytes32) -> None:
         self.access_trace[len(self.access_trace)-1].accessed_world_mpt_nodes.add(key)
+
+    def block_header(self, block_hash: Bytes32) -> bytes:
+        if block_hash not in self.headers:
+            header = self.src.block_header(block_hash)
+            self.headers[block_hash] = header
+        else:
+            header = self.headers[block_hash]
+        self.access_trace[len(self.access_trace)-1].block_headers.add(block_hash)
+        return header
 
     def world_accounts(self) -> MPT:
         return self.world_mpt

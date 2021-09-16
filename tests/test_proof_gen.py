@@ -3,7 +3,7 @@ from macula.opcodes import OpCode
 from macula.trace import StepsTrace, MPT
 from macula.step import Address, Bytes32, Step
 from macula import keccak_256
-from macula.exec_mode import ExecMode, exec_mode_err_range
+from macula.exec_mode import ExecMode
 from macula.interpreter import next_step
 from macula.node_shim import ShimNode
 from remerkleable.tree import Root, Gindex
@@ -44,6 +44,8 @@ class TestTrace(StepsTrace):
     world_mpt: TestMPT
     acc_mpt_dict: Dict[Address, TestMPT]  # only contracts have an entry here
     codes: Dict[Bytes32, bytes]
+    headers: Dict[Bytes32, bytes]
+
     steps: List[Step]
 
     # per step, track which contents were accessed (may recurse into embedded step)
@@ -53,8 +55,14 @@ class TestTrace(StepsTrace):
         self.world_mpt = TestMPT()
         self.acc_mpt_dict = dict()
         self.codes = dict()
+        self.headers = dict()
         self.steps = []
         self.witness_tracker = []
+
+    def block_header(self, block_hash: Bytes32) -> bytes:
+        if block_hash not in self.headers:
+            raise KeyError(f"could not find header {block_hash.hex()} in headers dict")
+        return self.headers[block_hash]
 
     def world_accounts(self) -> MPT:
         return self.world_mpt
@@ -140,10 +148,9 @@ def test_execute():
         trac.add_step(next)
 
         mode = trac.last().exec_mode
-        if exec_mode_err_range[0] <= mode <= exec_mode_err_range[1]:
-            raise Exception("unexpected error", ExecMode(mode), step)
-        if mode == ExecMode.CallPost.value:
+        if mode == ExecMode.DONE.value:
             break
+
     if i >= SAFETY_LIMIT:
         raise Exception("stopped interpreter, too many steps, infinite loop?", step)
 

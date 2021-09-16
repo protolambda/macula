@@ -1,14 +1,24 @@
 import click
 from typing import List, BinaryIO
-from .exec_mode import ExecMode, exec_is_done
-from .step import Step
+from .exec_mode import ExecMode
+from .step import Step, Bytes32, MinimalExecutionPayload
 from .capture import CaptureTrace
 from .interpreter import next_step
 from .witness import TraceWitnessData, StepAccessList
 from .external import HttpSource
-from .tx import load_tx
+from .block import load_block
 from remerkleable.tree import PairNode
 import json
+
+
+def encode_hex(v: bytes) -> str:
+    return '0x' + v.hex()
+
+
+def decode_hex(v: str) -> bytes:
+    if v.startswith('0x'):
+        v = v[2:]
+    return bytes.fromhex(v)
 
 
 @click.group()
@@ -24,24 +34,27 @@ SANITY_LIMIT = 10000
 
 @cli.command()
 @click.argument('output', type=click.File('wb'))
-@click.argument('api', type=click.STRING, help="API endpoint to fetch state trie and contract code from")
-@click.argument('tx', type=click.STRING, help="RLP encoded transaction, hex")  # TODO: replace with full RLP encoded block
-def gen(output: BinaryIO, api: str, tx: str):
-    """Generate a fraud proof for the given transaction"""
+@click.argument('api', type=click.STRING)
+@click.argument('block', type=click.STRING)
+def gen(output: BinaryIO, api: str, block: str):
+    """Generate a fraud proof for the given transaction
+
+    API endpoint to fetch state trie and contract code from
+
+    BLOCK json-encoded minimal execution payload
+     (parent_hash, coinbase, random, block_number, gas_limit, timestamp, transactions)
+    """
 
     click.echo("preparing trace...")
     src = HttpSource(api)
     trac = CaptureTrace(src)
 
-    click.echo("decoding transaction: "+tx)
-    if tx.startswith("0x"):
-        tx = tx[2:]
-
-    tx_bytes = bytes.fromhex(tx)
+    click.echo("decoding block: "+block)
+    block_obj = json.loads(block)
+    min_payload = MinimalExecutionPayload.from_obj(block_obj)
 
     click.echo("loading first step...")
-    init_step = Step()
-    load_tx(init_step, tx_bytes)  # TODO: we only load a single tx, not a full block yet
+    init_step = load_block(min_payload)
     trac.add_step(init_step)
 
     click.echo("running step by step proof generator...")
@@ -64,16 +77,13 @@ def gen(output: BinaryIO, api: str, tx: str):
         trac.add_step(new_step)
 
         mode = ExecMode(trac.last().exec_mode)
-        if exec_is_done(mode):
+        if mode == ExecMode.DONE:
             break
 
     click.echo("generated %d steps!" % n)
 
     if len(trac.step_trace) != len(trac.access_trace):
         raise Exception("steps and access count different: %d <> %d" % (len(trac.step_trace), len(trac.access_trace)))
-
-    def encode_hex(v: bytes) -> str:
-        return '0x' + v.hex()
 
     binary_nodes = dict()
 

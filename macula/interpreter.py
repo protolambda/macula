@@ -4,7 +4,9 @@ from .exec_mode import *
 from .jump_table import Operation, FRONTIER
 from .state_work import state_work_proc
 from .mpt_work import mpt_work_proc
-
+from .block import exec_pre_block, exec_block_pre_state_load, exec_block_history_load,\
+    exec_block_calc_base_fee, exec_block_tx_loop, exec_post_block
+from .tx import exec_tx_load
 
 class Rules(object):
     ...  # TODO: some EIPs are activated only at certain block numbers
@@ -26,20 +28,16 @@ def next_step(trac: StepsTrace) -> Step:
     mode = ExecMode(last.exec_mode)
 
     if mode == ExecMode.BlockPre:
-        raise NotImplementedError  # TODO block init work
+        return exec_pre_block(trac)
+
     if mode == ExecMode.TxLoad:
-        raise NotImplementedError  # TODO: check transaction is included, check fee params, signature validity, etc.
+        return exec_tx_load(trac)
     if mode == ExecMode.TxSig:
         raise NotImplementedError  # TODO signatures
     if mode == ExecMode.TxFeesPre:  # TODO validate fee stuff
         raise NotImplementedError
     if mode == ExecMode.TxFeesPost:  # TODO: charge tx fees
         raise NotImplementedError
-
-    if mode == ExecMode.StateWork:
-        return state_work_proc(trac)
-    if mode == ExecMode.MPTWork:
-        return mpt_work_proc(trac)
 
     if mode == ExecMode.CallPre:
         return exec_call_pre(trac)
@@ -64,8 +62,31 @@ def next_step(trac: StepsTrace) -> Step:
     if mode == ExecMode.OpcodeRun:
         return exec_opcode_run(trac)
 
-    if exec_mode_err_range[0] <= mode.value <= exec_mode_err_range[1]:
+    # check if any transaction processing error
+    if ExecMode.ErrSTOP <= mode <= ExecMode.ErrExecutionReverted:
         return exec_error(trac)
+
+    # TODO: if the block is invalid, then exit with generic FAIL? or DONE with error indication?
+    if ExecMode.ErrInvalidTransactionType <= mode <= ExecMode.ErrInvalidTransactionSig:
+        raise Exception("invalid block")
+
+    if mode == ExecMode.StateWork:
+        return state_work_proc(trac)
+    if mode == ExecMode.MPTWork:
+        return mpt_work_proc(trac)
+
+    if mode == ExecMode.BlockPreStateLoad:
+        return exec_block_pre_state_load(trac)
+    if mode == ExecMode.BlockHistoryLoad:
+        return exec_block_history_load(trac)
+    if mode == ExecMode.BlockCalcBaseFee:
+        return exec_block_calc_base_fee(trac)
+    if mode == ExecMode.BlockTxLoop:
+        return exec_block_tx_loop(trac)
+    if mode == ExecMode.BlockPost:
+        return exec_post_block(trac)
+
+    raise ExecMode("unrecognized execution mode: %d" % mode)
 
 
 def exec_call_pre(trac: StepsTrace) -> Step:

@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import IntEnum
 
 
-class ExecMode(Enum):
+class ExecMode(IntEnum):
     BlockPre = 0
 
     TxLoad = 0x01
@@ -26,7 +26,8 @@ class ExecMode(Enum):
     # Any error should follow up with running call-post processing
     CallPost = 0x30
 
-    # Stops execution
+    # Stops execution of a transaction
+    # (block processing continues, tx is just included as "failed", and still pays the fee etc.)
     ErrSTOP = 0x40
     ErrStackUnderflow = 0x41
     ErrStackOverflow = 0x42
@@ -39,6 +40,7 @@ class ExecMode(Enum):
     ErrInsufficientBalance = 0x49
     ErrExecutionReverted = 0x4a
 
+    # These errors are more critical: the block is invalid
     ErrInvalidTransactionType = 0x50
     ErrInvalidTransactionChain = 0x51
     ErrInvalidTransactionSig = 0x52
@@ -47,13 +49,21 @@ class ExecMode(Enum):
     StateWork = 0x60
     MPTWork = 0x61
 
-    # When completely done, and the tx was applied successfully
-    Success = 0xff
+    # Block pre-state load
+    BlockPreStateLoad = 0x70
 
+    # Block preparation
+    BlockHistoryLoad = 0x71
 
-# incl. start, incl. end
-exec_mode_err_range = (0x40, 0x5f)
+    # loads the parent block header to derive EIP-1559 base fee
+    # (using previous base fee, parent gas limit, parent gas used, and target)
+    BlockCalcBaseFee = 0x72
 
+    # Loop through transactions till everything is processed
+    BlockTxLoop = 0x73
 
-def exec_is_done(mode: ExecMode) -> bool:
-    return mode == ExecMode.Success or (exec_mode_err_range[0] <= mode.value <= exec_mode_err_range[1])
+    # when done with the block transactions
+    BlockPost = 0x80
+
+    # When completely done
+    DONE = 0xff

@@ -16,6 +16,38 @@ class Address(ByteVector[20]):
         return Address(v[:20])
 
 
+class RollupSystemTransaction(Container):
+    # TODO: deposit data etc.
+    foobar: uint64
+
+
+BYTES_PER_LOGS_BLOOM = 256
+MAX_BYTES_PER_OPAQUE_TRANSACTION = 2**20
+MAX_TRANSACTIONS_PER_PAYLOAD = 2**14
+Hash32 = Bytes32
+OpaqueTransaction = ByteList[MAX_BYTES_PER_OPAQUE_TRANSACTION]
+
+# 0: OpaqueTransaction
+# 1-41: reserved
+# 42: RollupSystemTransaction  (ID is TBD, fun placeholder for now)
+Transaction = Union[OpaqueTransaction, *([None] * (42-1)), RollupSystemTransaction]
+
+
+# Eth1 block, based on eth2 consensus-specs,
+# but without any field that is produced by the execution of the block itself.
+#
+# This loaded from the data availability layer, embedded in the step in PreBlock execution-mode,
+# and then gradually loaded into the Step for execution.
+class MinimalExecutionPayload(Container):
+    parent_hash: Hash32
+    coinbase: Address  # 'beneficiary' in the yellow paper
+    random: Bytes32  # 'difficulty' in the yellow paper (meaning changed with the Merge)
+    block_number: uint64  # 'number' in the yellow paper
+    gas_limit: uint64
+    timestamp: uint64
+    transactions: List[Transaction, MAX_TRANSACTIONS_PER_PAYLOAD]
+
+
 class BlockHistory(Vector[Bytes32, 256]):
     pass
 
@@ -233,7 +265,6 @@ class HistoryScope(Container):
 
 
 class BlockScope(Container):
-    # TODO: origin balance check for fee payment and value transfer
     coinbase: Address
     gas_limit: uint64
     block_number: uint64
@@ -242,10 +273,13 @@ class BlockScope(Container):
     base_fee: uint256
 
 
+# TODO: origin balance check for fee payment and value transfer
+
 class TxScope(Container):
     origin: Address
     tx_index: uint64
     gas_price: uint64
+    current_tx: Transaction
 
 
 class ContractScope(Container):
@@ -275,10 +309,6 @@ class ContractScope(Container):
     op: uint8
     # The program-counter, index pointing to current executed opcode in the code
     pc: uint64
-
-    # some operations need more than 1 step to execute.
-    # Track execution progress.
-    sub_index: uint64
 
     # return false if out of gas
     def use_gas(self, delta: uint64) -> bool:
@@ -476,18 +506,30 @@ class MPTWorkScope(Container):
 
 
 class Step(Container):
-    state_root: Bytes32
 
+    # Loaded from data-availability layer. Easily embedded (ssz merkle root)
+    # The execution trace starts with loading it into the internal state
+    payload: MinimalExecutionPayload
+
+    # The native Merkle Patricia Trie is used for world state.
+    # This is the *pre-state root* at the start of execution of the payload.
+    state_root: Bytes32
     # Main mode of operation, to find the right kind of step execution at any given point
     exec_mode: uint8
 
+    # once the block is loaded, the previous block hashes are loaded by traversing parent-hashes.
     history: HistoryScope
+
     block: BlockScope
     tx: TxScope
     contract: ContractScope
 
     state_work: StateWorkScope
     mpt_work: MPTWorkScope
+
+    # some operations need more than 1 step to execute.
+    # Track execution progress.
+    sub_index: uint64
 
     # When doing a return, continue with the operations after this step.
     # Also used for internal returns, e.g. unwinding back to caller of state-work.
