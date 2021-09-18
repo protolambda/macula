@@ -9,7 +9,7 @@ def memory_gas_cost():
 
 def dyn_gas_done(next: Step) -> Step:
     # Continue to the next interpreter step: the memory-size update
-    next.exec_mode = ExecMode.UpdateMemorySize.value
+    next.exec_mode = ExecMode.UpdateMemorySize
     return next
 
 

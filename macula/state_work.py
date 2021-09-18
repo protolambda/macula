@@ -46,7 +46,7 @@ def state_work_proc(trac: StepsTrace) -> Step:
             value: StateWork_AddBalance = last.state_work.work.value()
             raise NotImplementedError
         if typ == StateWorkType.GET_CONTRACT_CODE_HASH:
-            if last.mpt_work.mode == MPTAccessMode.DONE.value:
+            if last.mpt_work.mode == MPTAccessMode.DONE:
                 code_hash: Bytes32
                 if last.mpt_work.fail_lookup != 0:
                     code_hash = Bytes32()  # If we failed to find the account, it will be a 0 hash
@@ -64,9 +64,9 @@ def state_work_proc(trac: StepsTrace) -> Step:
                 value: StateWork_GetContractCodeHash = last.state_work.work.value()
                 key = mpt_hash(value.address)  # account addresses are hashed to get a trie key
                 next = last.copy()
-                next.exec_mode = ExecMode.MPTWork.value
+                next.exec_mode = ExecMode.MPTWork
                 next.mpt_work = MPTWorkScope(
-                    mode=MPTAccessMode.STARTING_READ.value,
+                    mode=MPTAccessMode.STARTING_READ,
                     tree_source=MPTTreeSource.WORLD_ACCOUNT,
                     current_root=last.state_root,
                     lookup_key=b32_to_uint256(key),
@@ -86,10 +86,10 @@ def state_work_proc(trac: StepsTrace) -> Step:
 
             # We first run the code-hash retrieval, return to this step with the result + continuation mode
             next.state_work.work.change(
-                selector=StateWorkType.GET_CONTRACT_CODE_HASH.value,
+                selector=StateWorkType.GET_CONTRACT_CODE_HASH,
                 value=StateWork_GetContractCodeHash(address=value.address))
-            next.state_work.mode = StateWorkMode.REQUESTING.value
-            next.state_work.mode_on_finish = StateWorkMode.CONTINUE_CODE_LOOKUP.value
+            next.state_work.mode = StateWorkMode.REQUESTING
+            next.state_work.mode_on_finish = StateWorkMode.CONTINUE_CODE_LOOKUP
             next.return_to_step.change(selector=1, value=last)
             return next
 
@@ -124,7 +124,7 @@ def state_work_proc(trac: StepsTrace) -> Step:
         next: Step = caller.copy()
         next.state_work.mode = last.state_work.mode_on_finish
         next.state_work.work.change(
-            selector=StateWorkType.GET_CONTRACT_CODE.value,
+            selector=StateWorkType.GET_CONTRACT_CODE,
             value=StateWork_GetContractCode(address=value.address, code_hash_result=code_hash, code=code))
         return next
 

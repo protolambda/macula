@@ -1,8 +1,8 @@
-from enum import Enum
+from enum import IntEnum
 from remerkleable.basic import uint8
 
 
-class OpCode(Enum):
+class OpCode(IntEnum):
     # 0x0 range - arithmetic ops
     STOP = 0x00
     ADD = 0x01

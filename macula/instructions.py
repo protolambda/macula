@@ -8,7 +8,7 @@ from .params import *
 def progress(step: Step) -> Step:
     # progress to the next opcode. Common between a lot of opcode steps
     step.contract.pc += 1
-    step.exec_mode = ExecMode.OpcodeLoad.value
+    step.exec_mode = ExecMode.OpcodeLoad
     return step
 
 
@@ -322,7 +322,7 @@ def op_balance(trac: StepsTrace) -> Step:
     next = last.copy()
     # Do we have the balance yet?
     if last.state_work.mode == StateWorkMode.RETURNED:
-        last.state_work.mode = StateWorkMode.IDLE.value  # kindly reset the mode, to not mess up future uses.
+        last.state_work.mode = StateWorkMode.IDLE  # kindly reset the mode, to not mess up future uses.
         value: StateWork_GetBalance = last.state_work.work.value()
         # Overwrite the address argument with the result
         next.contract.stack.tweak_u256(uint256(value.balance_result))
@@ -330,14 +330,14 @@ def op_balance(trac: StepsTrace) -> Step:
     else:
         assert last.state_work.mode == StateWorkMode.IDLE
         addr = Address.from_b32(last.contract.stack.peek_b32())
-        next.state_work.mode = StateWorkMode.REQUESTING.value
-        next.state_work.mode_on_finish = StateWorkMode.RETURNED.value
+        next.state_work.mode = StateWorkMode.REQUESTING
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED
         next.state_work.work.change(
-            selector=StateWorkType.GET_BALANCE.value,
+            selector=StateWorkType.GET_BALANCE,
             value=StateWork_GetBalance(address=addr)
         )
         next.return_to_step.change(selector=1, value=last)
-        next.exec_mode = ExecMode.StateWork.value
+        next.exec_mode = ExecMode.StateWork
         return next
 
 
@@ -457,7 +457,7 @@ def op_return_data_copy(trac: StepsTrace) -> Step:
     # Different than other copy instructions:
     # check bounds of the copy (memory is checked by interpreter, return data is not)
     if data_offset >= 2**63 or length >= 2**63 or len(last.contract.ret_data) < data_offset+length:
-        next.exec_mode = ExecMode.ErrReturnDataOutOfBounds.value
+        next.exec_mode = ExecMode.ErrReturnDataOutOfBounds
         return next
 
     # optimization: if not aligned with 32-bytes, make it align
@@ -497,7 +497,7 @@ def op_ext_code_size(trac: StepsTrace) -> Step:
     next = last.copy()
     # Do we have the size yet?
     if last.state_work.mode == StateWorkMode.RETURNED:
-        last.state_work.mode = StateWorkMode.IDLE.value  # kindly reset the mode, to not mess up future uses.
+        last.state_work.mode = StateWorkMode.IDLE  # kindly reset the mode, to not mess up future uses.
         value: StateWork_GetContractCodeSize = last.state_work.work.value()
         # Overwrite the address argument with the result
         next.contract.stack.tweak_u256(uint256(value.size))
@@ -505,14 +505,14 @@ def op_ext_code_size(trac: StepsTrace) -> Step:
     else:
         assert last.state_work.mode == StateWorkMode.IDLE
         addr = Address.from_b32(last.contract.stack.peek_b32())
-        next.state_work.mode = StateWorkMode.REQUESTING.value
-        next.state_work.mode_on_finish = StateWorkMode.RETURNED.value
+        next.state_work.mode = StateWorkMode.REQUESTING
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED
         next.state_work.work.change(
-            selector=StateWorkType.GET_CONTRACT_CODE_SIZE.value,
+            selector=StateWorkType.GET_CONTRACT_CODE_SIZE,
             value=StateWork_GetContractCodeSize(address=addr)
         )
         next.return_to_step.change(selector=1, value=last)
-        next.exec_mode = ExecMode.StateWork.value
+        next.exec_mode = ExecMode.StateWork
         return next
 
 
@@ -578,7 +578,7 @@ def op_ext_code_hash(trac: StepsTrace) -> Step:
     next = last.copy()
     # Do we have the code hash yet?
     if last.state_work.mode == StateWorkMode.RETURNED:
-        last.state_work.mode = StateWorkMode.IDLE.value  # kindly reset the mode, to not mess up future uses.
+        last.state_work.mode = StateWorkMode.IDLE  # kindly reset the mode, to not mess up future uses.
         value: StateWork_GetContractCodeHash = last.state_work.work.value()
         # Overwrite the address argument with the result
         next.contract.stack.tweak_b32(value.code_hash_result)
@@ -586,14 +586,14 @@ def op_ext_code_hash(trac: StepsTrace) -> Step:
     else:
         assert last.state_work.mode == StateWorkMode.IDLE
         addr = Address.from_b32(last.contract.stack.peek_b32())
-        next.state_work.mode = StateWorkMode.REQUESTING.value
-        next.state_work.mode_on_finish = StateWorkMode.RETURNED.value
+        next.state_work.mode = StateWorkMode.REQUESTING
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED
         next.state_work.work.change(
-            selector=StateWorkType.GET_CONTRACT_CODE_HASH.value,
+            selector=StateWorkType.GET_CONTRACT_CODE_HASH,
             value=StateWork_GetContractCodeHash(address=addr)
         )
         next.return_to_step.change(selector=1, value=last)
-        next.exec_mode = ExecMode.StateWork.value
+        next.exec_mode = ExecMode.StateWork
         return next
 
 
@@ -692,7 +692,7 @@ def op_sload(trac: StepsTrace) -> Step:
     next = last.copy()
     # Do we have the storage value yet?
     if last.state_work.mode == StateWorkMode.RETURNED:
-        last.state_work.mode = StateWorkMode.IDLE.value  # kindly reset the mode, to not mess up future uses.
+        last.state_work.mode = StateWorkMode.IDLE  # kindly reset the mode, to not mess up future uses.
         value: StateWork_StorageRead = last.state_work.work.value()
         # Overwrite the address argument with the result
         next.contract.stack.tweak_b32(value.value_result)
@@ -700,14 +700,14 @@ def op_sload(trac: StepsTrace) -> Step:
     else:
         assert last.state_work.mode == StateWorkMode.IDLE
         storage_hash = last.contract.stack.peek_b32()
-        next.state_work.mode = StateWorkMode.REQUESTING.value
-        next.state_work.mode_on_finish = StateWorkMode.RETURNED.value
+        next.state_work.mode = StateWorkMode.REQUESTING
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED
         next.state_work.work.change(
-            selector=StateWorkType.STORAGE_READ.value,
+            selector=StateWorkType.STORAGE_READ,
             value=StateWork_StorageRead(address=last.contract.code_addr, key=storage_hash)
         )
         next.return_to_step.change(selector=1, value=last)
-        next.exec_mode = ExecMode.StateWork.value
+        next.exec_mode = ExecMode.StateWork
         return next
 
 
@@ -716,7 +716,7 @@ def op_sstore(trac: StepsTrace) -> Step:
     next = last.copy()
     # Have we written the storage value yet?
     if last.state_work.mode == StateWorkMode.RETURNED:
-        last.state_work.mode = StateWorkMode.IDLE.value  # kindly reset the mode, to not mess up future uses.
+        last.state_work.mode = StateWorkMode.IDLE  # kindly reset the mode, to not mess up future uses.
         # The state-root was updated by the state-work, we can progress to next instruction now
         return progress(next)
     else:
@@ -724,10 +724,10 @@ def op_sstore(trac: StepsTrace) -> Step:
         storage_pos = last.contract.stack.back_b32(0)
         storage_val = last.contract.stack.back_b32(1)
 
-        next.state_work.mode = StateWorkMode.REQUESTING.value
-        next.state_work.mode_on_finish = StateWorkMode.RETURNED.value
+        next.state_work.mode = StateWorkMode.REQUESTING
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED
         next.state_work.work.change(
-            selector=StateWorkType.STORAGE_WRITE.value,
+            selector=StateWorkType.STORAGE_WRITE,
             value=StateWork_StorageWrite(
                 address=last.contract.code_addr,
                 key=storage_pos,
@@ -735,7 +735,7 @@ def op_sstore(trac: StepsTrace) -> Step:
             )
         )
         next.return_to_step.change(selector=1, value=last)
-        next.exec_mode = ExecMode.StateWork.value
+        next.exec_mode = ExecMode.StateWork
         return next
 
 
@@ -760,7 +760,7 @@ def op_jump_i(trac: StepsTrace) -> Step:
             return next
         # perform jump
         next.contract.pc = pos
-        next.exec_mode = ExecMode.OpcodeLoad.value
+        next.exec_mode = ExecMode.OpcodeLoad
         return next
     else:
         # just go to next opcode, jump conditional was false
@@ -871,7 +871,7 @@ def op_call(trac: StepsTrace) -> Step:
     # part 3: Fail if we're trying to execute above the call depth limit
     if part == 3:
         if last.contract.call_depth > CALL_CREATE_DEPTH:
-            next.exec_mode = ExecMode.ErrDepth.value
+            next.exec_mode = ExecMode.ErrDepth
             return next
 
     # Part 4: TODO: read balance of the current contract/account
@@ -883,7 +883,7 @@ def op_call(trac: StepsTrace) -> Step:
             # TODO: read earlier retrieved balance
             amount = 123
             if amount < value:
-                next.exec_mode = ExecMode.ErrInsufficientBalance.value
+                next.exec_mode = ExecMode.ErrInsufficientBalance
                 return next
         next.sub_index = 6
         return next
@@ -977,7 +977,7 @@ def op_return(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     # TODO implement return-data from memory copy
-    next.exec_mode = ExecMode.CallPost.value
+    next.exec_mode = ExecMode.CallPost
     return next
 
 
@@ -985,7 +985,7 @@ def op_revert(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     # TODO implement return-data from memory copy
-    next.exec_mode = ExecMode.ErrExecutionReverted.value
+    next.exec_mode = ExecMode.ErrExecutionReverted
     return next
 
 
@@ -993,7 +993,7 @@ def op_stop(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     # halting opcode
-    next.exec_mode = ExecMode.ErrSTOP.value
+    next.exec_mode = ExecMode.ErrSTOP
     return next
 
 
@@ -1025,7 +1025,7 @@ def op_push1(trac: StepsTrace) -> Step:
         next.contract.stack.push_u256(uint256(0))
     pc += 1  # continue after pushed byte (will be 0 STOP opcode if already beyond code length)
     next.contract.pc = pc
-    next.exec_mode = ExecMode.OpcodeLoad.value
+    next.exec_mode = ExecMode.OpcodeLoad
     return next
 
 
@@ -1050,7 +1050,7 @@ def make_push(size: int, push_byte_size: int) -> Processor:
             content += b"\x00" * (32 - (end_min - start_min))
         next.contract.stack.push_b32(Bytes32(content))
         next.contract.pc = pc + size
-        next.exec_mode = ExecMode.OpcodeLoad.value
+        next.exec_mode = ExecMode.OpcodeLoad
         return next
     return op_push
 

@@ -1,6 +1,6 @@
 from .trace import StepsTrace, Processor, MPT
 from .step import *
-from enum import Enum
+from enum import IntEnum
 from . import keccak_256
 
 
@@ -107,7 +107,7 @@ def rlp_encode_node(items: list) -> bytes:
         return (0xbf + ll).to_bytes(length=1, byteorder='big') + l.to_bytes(length=ll, byteorder='big') + data
 
 
-class MPTTreeSource(Enum):
+class MPTTreeSource(IntEnum):
     WORLD_ACCOUNTS = 0x00
     ACCOUNT_STORAGE = 0x01
     # TODO: we could also interface with transactions and receipts once we implement block-fraud-proofs.
@@ -115,7 +115,7 @@ class MPTTreeSource(Enum):
     RECEIPTS = 0x03
 
 
-class MPTAccessMode(Enum):
+class MPTAccessMode(IntEnum):
     # top to bottom tree traversal, get value by key, starting from the given MPT root
     READING = 0x00
     # after reading from top to closest destination, modify the node and bubble up the change
@@ -738,7 +738,7 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
 
                     # we need to add the nibble it was located by, and the remaining node may have a deeper path.
                     # so we continue in grafting mode, and visit the child first.
-                    next.mpt_work.mode = MPTAccessMode.GRAFTING_A.value
+                    next.mpt_work.mode = MPTAccessMode.GRAFTING_A
                 else:
                     # Bubbling up.
                     assert content is not None
@@ -749,7 +749,7 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                     branch_root = new_branch_node(data_li)
                     next.mpt_work.current_root = branch_root
                     # the branch stays with remaining children, switch to writing mode
-                    next.mpt_work.mode = MPTAccessMode.WRITING.value
+                    next.mpt_work.mode = MPTAccessMode.WRITING
                     return next
             else:
                 raise NotImplementedError
@@ -865,7 +865,7 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
 
                     # we need to add the nibble it was located by, and the remaining node may have a deeper path.
                     # so we continue in grafting mode, and visit the child first.
-                    next.mpt_work.mode = MPTAccessMode.GRAFTING_A.value
+                    next.mpt_work.mode = MPTAccessMode.GRAFTING_A
 
                     return next
             else:
@@ -879,7 +879,7 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
                 branch_root = new_branch_node(data_li)
                 next.mpt_work.current_root = branch_root
                 # the branch stays with remaining children, switch to writing mode
-                next.mpt_work.mode = MPTAccessMode.WRITING.value
+                next.mpt_work.mode = MPTAccessMode.WRITING
                 return next
         else:
             raise NotImplementedError
@@ -888,7 +888,7 @@ def mpt_step_with_trie(last: Step, trie: MPT) -> Step:
 # TODO: init claim with current_root set to state-root (or account storage root)
 def mpt_work_proc(trac: StepsTrace) -> Step:
     last = trac.last()
-    mpt_mode = MPTAccessMode(last.mpt_work.mode.value)
+    mpt_mode = MPTAccessMode(last.mpt_work.mode)
 
     trie_src = MPTTreeSource(last.mpt_work.tree_source)
     if trie_src == MPTTreeSource.WORLD_ACCOUNTS:
@@ -900,14 +900,14 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
         # TODO: support transactions and receipts
         raise NotImplementedError
 
-    if mpt_mode.value <= 5:  # all internal tree operation modes
+    if mpt_mode <= 5:  # all internal tree operation modes
         return mpt_step_with_trie(last, trie)
 
     if mpt_mode == MPTAccessMode.STARTING_READ:
         next = last.copy()
         # TODO: maybe assert we set the read arguments correctly?
-        next.mpt_work.mode = MPTAccessMode.READING.value
-        next.mpt_work.mode_on_finish = MPTAccessMode.RETURNING_READ.value
+        next.mpt_work.mode = MPTAccessMode.READING
+        next.mpt_work.mode_on_finish = MPTAccessMode.RETURNING_READ
         return next
 
     if mpt_mode == MPTAccessMode.STARTING_WRITE:  # writing start (value to be mapped to node root)
@@ -916,15 +916,15 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
             next.mpt_work.write_root = mpt_hash(last.mpt_work.value)
         else:
             next.mpt_work.write_root = last.mpt_work.value
-        next.mpt_work.mode = MPTAccessMode.READING.value  # continue to preparation reading
-        next.mpt_work.mode_on_finish = MPTAccessMode.READY_WRITE.value  # return to writer value injection
+        next.mpt_work.mode = MPTAccessMode.READING  # continue to preparation reading
+        next.mpt_work.mode_on_finish = MPTAccessMode.READY_WRITE  # return to writer value injection
         return next
 
     if mpt_mode == MPTAccessMode.STARTING_DELETE:
         next = last.copy()
         # TODO: maybe assert we set the deletion arguments correctly?
-        next.mpt_work.mode = MPTAccessMode.READING.value  # continue to preparation reading
-        next.mpt_work.mode_on_finish = MPTAccessMode.READY_DELETE.value  # return to deletion pivot
+        next.mpt_work.mode = MPTAccessMode.READING  # continue to preparation reading
+        next.mpt_work.mode_on_finish = MPTAccessMode.READY_DELETE  # return to deletion pivot
         return next
 
     if mpt_mode == MPTAccessMode.READY_WRITE:
@@ -934,8 +934,8 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
         # TODO: handle read fail
 
         next.mpt_work.current_root = last.mpt_work.write_root
-        next.mpt_work.mode = MPTAccessMode.WRITING.value  # continue to writing
-        next.mpt_work.mode_on_finish = MPTAccessMode.RETURNING_WRITE.value  # once done bubbling up, return
+        next.mpt_work.mode = MPTAccessMode.WRITING  # continue to writing
+        next.mpt_work.mode_on_finish = MPTAccessMode.RETURNING_WRITE  # once done bubbling up, return
         return next
 
     if mpt_mode == MPTAccessMode.READY_DELETE:
@@ -944,8 +944,8 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
 
         # TODO: handle read fail
 
-        next.mpt_work.mode = MPTAccessMode.DELETING.value  # continue to deleting
-        next.mpt_work.mode_on_finish = MPTAccessMode.RETURNING_DELETE.value  # once done bubbling up, return
+        next.mpt_work.mode = MPTAccessMode.DELETING  # continue to deleting
+        next.mpt_work.mode_on_finish = MPTAccessMode.RETURNING_DELETE  # once done bubbling up, return
         return next
 
     if mpt_mode == MPTAccessMode.RETURNING_READ:  # returning, back to MPT user
@@ -956,7 +956,7 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
         # remember the value we read
         next.mpt_work.value = last.mpt_work.value
         # and that we returned
-        next.mpt_work.mode = MPTAccessMode.DONE.value
+        next.mpt_work.mode = MPTAccessMode.DONE
         return next
 
     if mpt_mode == MPTAccessMode.RETURNING_WRITE:
@@ -967,7 +967,7 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
         # TODO: handle write fail
         next.mpt_work.current_root = last.mpt_work.current_root
         # and that we are done
-        next.mpt_work.mode = MPTAccessMode.DONE.value
+        next.mpt_work.mode = MPTAccessMode.DONE
         return next
 
     if mpt_mode == MPTAccessMode.RETURNING_DELETE:
@@ -978,7 +978,7 @@ def mpt_work_proc(trac: StepsTrace) -> Step:
         # TODO: handle delete fail
         next.mpt_work.current_root = last.mpt_work.current_root
         # and that we are done
-        next.mpt_work.mode = MPTAccessMode.DONE.value
+        next.mpt_work.mode = MPTAccessMode.DONE
         return next
 
     raise Exception("unexpected MPT mode: %d" % mpt_mode)

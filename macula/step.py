@@ -1,5 +1,5 @@
 from typing import Optional, BinaryIO, Union as PyUnion, Any
-from enum import Enum
+from enum import IntEnum
 from remerkleable.complex import Container, Vector, List, Type, TypeVar
 from remerkleable.union import Union
 from remerkleable.byte_arrays import Bytes32, ByteVector, ByteList
@@ -174,7 +174,7 @@ class Code(List[uint8, 0x6000]):
         if int(dest) >= len(self):
             return False
         # Only JUMPDESTs allowed for destinations
-        if self[dest] != uint8(OpCode.CALL.value):
+        if self[dest] != uint8(OpCode.CALL):
             return False
         # TODO: jump-dest analysis is missing! Cannot jump into data segment.
         # we likely want to cache jump-dest analysis in the step data to not repeat it for every step
@@ -323,7 +323,7 @@ class ContractScope(Container):
         self.gas += delta
 
 
-class StateWorkType(Enum):
+class StateWorkType(IntEnum):
     NO_ACTION = 0
 
     HAS_ACCOUNT = 1
@@ -435,7 +435,7 @@ StateWork = Union[  # All these must match the enum StateWorkType
     StateWork_StorageWrite,          # STORAGE_WRITE
 ]
 
-class StateWorkMode(Enum):
+class StateWorkMode(IntEnum):
     IDLE = 0
     REQUESTING = 1
     # After getting the code-hash, load the full code
@@ -474,7 +474,7 @@ class MPTWorkScope(Container):
     # after finishing the mode, continue with this next mode.
     mode_on_finish: uint8
 
-    # the step that has step.value that represents the parent of the current node
+    # the step that has step that represents the parent of the current node
     parent_node_step: RecursiveStep
 
     # The current node (to expand or to bubble up)

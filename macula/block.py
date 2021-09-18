@@ -12,7 +12,7 @@ def load_block(payload: MinimalExecutionPayload) -> Step:
         # TODO: in the future maybe load multiple payloads this way, and go through multiple blocks in trace.
         payload=payload,
         # the pre-state-root is part of the parent hash and is loaded later.
-        exec_mode=ExecMode.BlockPre.value,
+        exec_mode=ExecMode.BlockPre,
         # all other values left to default. Easy to initialize the step on-chain.
         # The trace execution will take care of further loading the payload into the Step
     )
