@@ -76,7 +76,7 @@ def int_byte_length(l: int) -> int:
     ll = 1
     while l > 0xff:
         ll += 1
-        l >> 8
+        l >>= 8
     return ll
 
 
