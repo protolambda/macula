@@ -1053,8 +1053,22 @@ def make_log(size: int) -> Processor:
     def op_log(trac: StepsTrace) -> Step:
         last = trac.last()
         next = last.copy()
-        # TODO
-        raise NotImplementedError
+        m_start, m_size = next.contract.stack.pop_u256(), next.contract.stack.pop_u256()
+        topics = []
+        for i in range(size):
+            top = next.contract.stack.pop_b32()
+            topics.append(top)
+
+        # TODO: copy data into log in small pieces? How large can log data be?
+        data = list(last.contract.memory[m_start:m_start+m_size])
+
+        next.tx.logs.append(Log(
+            address=last.contract.self_addr,
+            topics=topics,
+            data=data,
+        ))
+
+        return progress(next)
     return op_log
 
 

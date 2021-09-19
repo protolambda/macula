@@ -7,6 +7,7 @@ from remerkleable.basic import uint8, uint64, uint256, boolean
 from remerkleable.core import BackedView, View, Node, ViewHook, ObjType
 from .opcodes import OpCode
 
+
 class Address(ByteVector[20]):
     def to_b32(self) -> Bytes32:
         return Bytes32(bytes(self).rjust(32))
@@ -25,15 +26,15 @@ class RollupSystemTransaction(Container):
 
 
 BYTES_PER_LOGS_BLOOM = 256
-MAX_BYTES_PER_OPAQUE_TRANSACTION = 2**20
-MAX_TRANSACTIONS_PER_PAYLOAD = 2**14
+MAX_BYTES_PER_OPAQUE_TRANSACTION = 2 ** 20
+MAX_TRANSACTIONS_PER_PAYLOAD = 2 ** 14
 Hash32 = Bytes32
 OpaqueTransaction = ByteList[MAX_BYTES_PER_OPAQUE_TRANSACTION]
 
 # 0: OpaqueTransaction
 # 1-41: reserved
 # 42: RollupSystemTransaction  (ID is TBD, fun placeholder for now)
-Transaction = Union[OpaqueTransaction, *([None] * (42-1)), RollupSystemTransaction]
+Transaction = Union[OpaqueTransaction, *([None] * (42 - 1)), RollupSystemTransaction]
 
 
 # Eth1 block, based on eth2 consensus-specs,
@@ -71,14 +72,14 @@ class Memory(List[uint8, 64 << 20]):
             # note: may not align with 32-byte tree leaf values
             # (bytes are packed together in the binary tree that backs the memory),
             # but can be read in max 2 adjacent leaf nodes.
-            return Bytes32(self[offset:offset+32])
+            return Bytes32(self[offset:offset + 32])
         return Bytes32()
 
     def set_32_bytes(self, offset: uint64, val: Bytes32):
         if offset + 32 > len(self):
             raise Exception("invalid memory access, must be a bug")
         # note: alignment, either touches one or two tree leaf nodes.
-        self[offset:offset+32] = val
+        self[offset:offset + 32] = val
 
 
 def uint256_to_b32(v: uint256) -> Bytes32:
@@ -99,12 +100,12 @@ class Stack(List[Bytes32, 1024]):
         self.append(uint256_to_b32(b))
 
     def pop_b32(self) -> Bytes32:
-        v = self[len(self)-1]
+        v = self[len(self) - 1]
         self.pop()
         return v
 
     def pop_u256(self) -> uint256:
-        v = b32_to_uint256(self[len(self)-1])
+        v = b32_to_uint256(self[len(self) - 1])
         self.pop()
         return v
 
@@ -115,49 +116,49 @@ class Stack(List[Bytes32, 1024]):
             self.pop()
 
     def dup(self, n: int) -> None:
-        self.append(self[len(self)-n])
+        self.append(self[len(self) - n])
 
     def swap(self, n: int) -> None:
         l = len(self)
-        a = self[l-1]
-        b = self[l-n]
-        self[l-n] = a
-        self[l-1] = b
+        a = self[l - 1]
+        b = self[l - n]
+        self[l - n] = a
+        self[l - 1] = b
 
     def peek_b32(self) -> Bytes32:
-        return self[len(self)-1]
+        return self[len(self) - 1]
 
     def peek_u256(self) -> uint256:
-        return b32_to_uint256(self[len(self)-1])
+        return b32_to_uint256(self[len(self) - 1])
 
     # like peek, but write instead of read, to avoid pop/push overhead
     def tweak_b32(self, v: Bytes32):
-        self[len(self)-1] = v
+        self[len(self) - 1] = v
 
     def tweak_u256(self, v: uint256):
-        self[len(self)-1] = uint256_to_b32(v)
+        self[len(self) - 1] = uint256_to_b32(v)
 
     def tweak_back_b32(self, v: Bytes32, n: int):
         length = len(self)
-        if n+1 > length:
+        if n + 1 > length:
             raise Exception("bad stack access, interpreter bug")
-        self[length-n-1] = v
+        self[length - n - 1] = v
 
     def tweak_back_u256(self, v: uint256, n: int):
         length = len(self)
-        if n+1 > length:
+        if n + 1 > length:
             raise Exception("bad stack access, interpreter bug")
-        self[length-n-1] = uint256_to_b32(v)
+        self[length - n - 1] = uint256_to_b32(v)
 
     def back_b32(self, n: int) -> Bytes32:
         length = len(self)
-        if n+1 > length:
+        if n + 1 > length:
             raise Exception("bad stack access, interpreter bug")
         return self[length - n - 1]
 
     def back_u256(self, n: int) -> uint256:
         length = len(self)
-        if n+1 > length:
+        if n + 1 > length:
             raise Exception("bad stack access, interpreter bug")
         return b32_to_uint256(self[length - n - 1])
 
@@ -273,6 +274,33 @@ class HistoryScope(Container):
     block_hashes: BlockHistory
 
 
+class LogBloom(Vector[uint8, 256]):
+    pass
+
+
+MAX_TOPICS_PER_LOG = 5  # TODO
+MAX_LOG_DATA_SIZE = 1024  # TODO
+MAX_LOGS_PER_TRANSACTION = 1024  # TODO
+
+
+class Log(Container):
+    # address of the contract that generated the event
+    address: Address
+    # list of topics provided by the contract.
+    topics: List[Bytes32, MAX_TOPICS_PER_LOG]
+    # supplied by the contract, usually ABI-encoded
+    data: List[uint8, MAX_LOG_DATA_SIZE]
+
+
+class Receipt(Container):
+    tx_type: uint8
+    post_state_root: Bytes32
+    status: uint64
+    cumulative_gas_used: uint64
+    bloom: LogBloom
+    logs: List[Log, MAX_LOGS_PER_TRANSACTION]
+
+
 class BlockScope(Container):
     coinbase: Address
     gas_limit: uint64
@@ -280,15 +308,15 @@ class BlockScope(Container):
     time: uint64
     difficulty: uint256
     base_fee: uint256
+    receipts: List[Receipt, MAX_TRANSACTIONS_PER_PAYLOAD]
 
-
-# TODO: origin balance check for fee payment and value transfer
 
 class TxScope(Container):
     origin: Address
     tx_index: uint64
     gas_price: uint64
     current_tx: Transaction
+    logs: List[Log, MAX_LOGS_PER_TRANSACTION]
 
 
 # When entering and exiting a contract, a scope
@@ -381,9 +409,11 @@ class StateWorkType(IntEnum):
 
     # TODO: more state ops
 
+
 class StateWork_HasAccount(Container):
     address: Address
     result: boolean
+
 
 class StateWork_CreateAccount(Container):
     address: Address
@@ -391,60 +421,74 @@ class StateWork_CreateAccount(Container):
     nonce: uint256
     code_hash: Bytes32
 
+
 class StateWork_GetBalance(Container):
     address: Address
     balance_result: uint256
+
 
 class StateWork_SetBalance(Container):
     address: Address
     balance: uint256
 
+
 class StateWork_SubBalance(Container):
     address: Address
     sub_balance: uint256
+
 
 class StateWork_AddBalance(Container):
     address: Address
     add_balance: uint256
 
+
 class StateWork_GetContractCodeHash(Container):
     address: Address
     code_hash_result: Bytes32
 
+
 class StateWork_SetContractCodeHash(Container):
     address: Address
     code_hash_result: Bytes32
+
 
 class StateWork_GetContractCode(Container):
     address: Address
     code_hash_result: Bytes32
     code: Code
 
+
 class StateWork_SetContractCode(Container):
     address: Address
     code: Code
+
 
 class StateWork_GetContractCodeSize(Container):
     address: Address
     size: uint64
 
+
 class StateWork_GetNonce(Container):
     address: Address
     nonce_result: uint256
 
+
 class StateWork_SetNonce(Container):
     address: Address
     nonce: uint256
+
 
 class StateWork_StorageRead(Container):
     address: Address
     key: Bytes32
     value_result: Bytes32
 
+
 class StateWork_StorageWrite(Container):
     address: Address
     key: Bytes32
     value: Bytes32
+
 
 class StateWork_SelfDestruct(Container):
     destruct_address: Address
@@ -452,24 +496,25 @@ class StateWork_SelfDestruct(Container):
 
 
 StateWork = Union[  # All these must match the enum StateWorkType
-    None,                            # NO_ACTION
-    StateWork_HasAccount,            # HAS_ACCOUNT
-    StateWork_CreateAccount,         # CREATE_ACCOUNT
-    StateWork_GetBalance,            # GET_BALANCE
-    StateWork_SetBalance,            # SET_BALANCE
-    StateWork_SubBalance,            # SUB_BALANCE
-    StateWork_AddBalance,            # ADD_BALANCE
-    StateWork_GetContractCodeHash,   # GET_CONTRACT_CODE_HASH
-    StateWork_SetContractCodeHash,   # SET_CONTRACT_CODE_HASH
-    StateWork_GetContractCode,       # GET_CONTRACT_CODE
-    StateWork_SetContractCode,       # SET_CONTRACT_CODE
-    StateWork_GetContractCodeSize,   # GET_CONTRACT_CODE_SIZE
-    StateWork_GetNonce,              # GET_NONCE
-    StateWork_SetNonce,              # SET_NONCE
-    StateWork_StorageRead,           # STORAGE_READ
-    StateWork_StorageWrite,          # STORAGE_WRITE
-    StateWork_SelfDestruct,          # SELF_DESTRUCT_ACCOUNT
+    None,  # NO_ACTION
+    StateWork_HasAccount,  # HAS_ACCOUNT
+    StateWork_CreateAccount,  # CREATE_ACCOUNT
+    StateWork_GetBalance,  # GET_BALANCE
+    StateWork_SetBalance,  # SET_BALANCE
+    StateWork_SubBalance,  # SUB_BALANCE
+    StateWork_AddBalance,  # ADD_BALANCE
+    StateWork_GetContractCodeHash,  # GET_CONTRACT_CODE_HASH
+    StateWork_SetContractCodeHash,  # SET_CONTRACT_CODE_HASH
+    StateWork_GetContractCode,  # GET_CONTRACT_CODE
+    StateWork_SetContractCode,  # SET_CONTRACT_CODE
+    StateWork_GetContractCodeSize,  # GET_CONTRACT_CODE_SIZE
+    StateWork_GetNonce,  # GET_NONCE
+    StateWork_SetNonce,  # SET_NONCE
+    StateWork_StorageRead,  # STORAGE_READ
+    StateWork_StorageWrite,  # STORAGE_WRITE
+    StateWork_SelfDestruct,  # SELF_DESTRUCT_ACCOUNT
 ]
+
 
 class StateWorkMode(IntEnum):
     IDLE = 0
@@ -542,7 +587,6 @@ class MPTWorkScope(Container):
 
 
 class Step(Container):
-
     # Loaded from data-availability layer. Easily embedded (ssz merkle root)
     # The execution trace starts with loading it into the internal state
     payload: MinimalExecutionPayload

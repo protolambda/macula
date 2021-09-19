@@ -57,3 +57,7 @@ def exec_tx_load(trac: StepsTrace) -> Step:
     # Other consensus transaction types are illegal / not implemented
     raise NotImplementedError
 
+
+# TODO: signature check, sender address recovery
+
+# TODO: origin balance check for fee payment and value transfer
