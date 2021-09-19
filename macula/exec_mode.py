@@ -20,11 +20,14 @@ class ExecMode(IntEnum):
     # when done running, continue with ExecOpcodeLoad. Or any error
     OpcodeRun = 0x18
 
-    # Call pre-processing (increment call depth)
-    CallPre = 0x30
+    # Every call opcode shares a setup
+    CallSetup = 0x30
+
+    # Call pre-processing
+    CallPre = 0x31
 
     # Any error should follow up with running call-post processing
-    CallPost = 0x30
+    CallPost = 0x32
 
     # Stops execution of a transaction
     # (block processing continues, tx is just included as "failed", and still pays the fee etc.)

@@ -13,6 +13,9 @@ class Address(ByteVector[20]):
 
     @staticmethod
     def from_b32(v: Bytes32) -> "Address":
+        # ignore other bytes.
+        # E.g. when reading an address from the stack we ignore every byte outside of the address
+        # just like 'toAddr := common.Address(addr.Bytes20())' in geth
         return Address(v[:20])
 
 
@@ -104,6 +107,12 @@ class Stack(List[Bytes32, 1024]):
         v = b32_to_uint256(self[len(self)-1])
         self.pop()
         return v
+
+    def remove(self, n: int):
+        # optimize in solidity verifier:
+        # instead can also zero the n leafs and modify length mix-in node
+        for i in range(n):
+            self.pop()
 
     def dup(self, n: int) -> None:
         self.append(self[len(self)-n])
@@ -282,6 +291,24 @@ class TxScope(Container):
     current_tx: Transaction
 
 
+# When entering and exiting a contract, a scope
+class CallWorkScope(Container):
+    mode: uint8  # see CallMode enum
+    caller: Address  # used for code and delegate calls
+    code_addr: Address
+
+    read_only: boolean  # used for static-calls
+    gas: uint64  # gas supplied by caller
+    addr: Address  # used for code and delegate calls (run code of other account)
+    value: uint256
+    # the below are untrusted offsets/sizes,
+    # gas should be charged before execution of a crazy call
+    input_offset: uint256
+    input_size: uint256
+    return_offset: uint256
+    return_size: uint256
+
+
 class ContractScope(Container):
     to: Address
     create: boolean
@@ -296,6 +323,8 @@ class ContractScope(Container):
     ret_data: ReturnData
     code: Code
     code_hash: Bytes32
+    # address of the *code*, used for code opcodes.
+    # Not of the self contract, which may have a delegated address
     code_addr: Address
     input: Input
     gas: uint64
@@ -524,6 +553,7 @@ class Step(Container):
     tx: TxScope
     contract: ContractScope
 
+    call_work: CallWorkScope
     state_work: StateWorkScope
     mpt_work: MPTWorkScope
 

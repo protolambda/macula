@@ -2,6 +2,7 @@ from .trace import StepsTrace
 from .step import *
 from .exec_mode import *
 from .jump_table import Operation, FRONTIER
+from .call_work import call_work_proc
 from .state_work import state_work_proc
 from .mpt_work import mpt_work_proc
 from .block import exec_pre_block, exec_block_pre_state_load, exec_block_history_load,\
@@ -39,6 +40,8 @@ def next_step(trac: StepsTrace) -> Step:
     if mode == ExecMode.TxFeesPost:  # TODO: charge tx fees
         raise NotImplementedError
 
+    if mode == ExecMode.CallSetup:
+        return call_work_proc(trac)
     if mode == ExecMode.CallPre:
         return exec_call_pre(trac)
     if mode == ExecMode.CallPost:

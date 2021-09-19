@@ -2,6 +2,7 @@ from .trace import StepsTrace, Processor
 from .step import *
 from .exec_mode import *
 from .state_work import *
+from .call_work import *
 from .params import *
 
 
@@ -313,7 +314,7 @@ def op_sha3(trac: StepsTrace) -> Step:
 def op_address(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    next.contract.stack.push_b32(last.contract.code_addr.to_b32())
+    next.contract.stack.push_b32(last.contract.addr.to_b32())
     return progress(next)
 
 
@@ -704,7 +705,7 @@ def op_sload(trac: StepsTrace) -> Step:
         next.state_work.mode_on_finish = StateWorkMode.RETURNED
         next.state_work.work.change(
             selector=StateWorkType.STORAGE_READ,
-            value=StateWork_StorageRead(address=last.contract.code_addr, key=storage_hash)
+            value=StateWork_StorageRead(address=last.contract.addr, key=storage_hash)
         )
         next.return_to_step.change(selector=1, value=last)
         next.exec_mode = ExecMode.StateWork
@@ -729,7 +730,7 @@ def op_sstore(trac: StepsTrace) -> Step:
         next.state_work.work.change(
             selector=StateWorkType.STORAGE_WRITE,
             value=StateWork_StorageWrite(
-                address=last.contract.code_addr,
+                address=last.contract.addr,
                 key=storage_pos,
                 value=storage_val,
             )
@@ -813,164 +814,164 @@ def op_call(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
 
-    # stack layout:
-    # 0: gas
-    # 1: addr
-    # 2: value
-    # 3: input offset
-    # 4: input size
-    # 5: return offset
-    # 6: return size
+    # TODO: geth uses interpreter.evm.callGasTemp here instead, modifying it during gas computation
+    gas = last.contract.stack.back_u256(0)
+    addr = Address.from_b32(last.contract.stack.back_b32(1))
+    value = last.contract.stack.back_u256(2)
+    input_offset = last.contract.stack.back_u256(3)
+    input_size = last.contract.stack.back_u256(4)
+    return_offset = last.contract.stack.back_u256(5)
+    return_size = last.contract.stack.back_u256(6)
 
-    part = last.sub_index
+    # pop it all at once
+    next.contract.stack.remove(7)
 
-    # Part 0: reset the input
-    if part == 0:
-        next.contract.input = Input()
-        next.sub_index = 1
-        return next
+    if value != uint256(0):
+        gas += CALL_STIPEND
 
-    # Part 1: load memory into the input, in small steps. A.k.a. the call arguments.
-    if part == 1:
-        in_size = next.contract.stack.back_u256(4)
-        if in_size > 0:
-            in_offset = next.contract.stack.back_u256(3)
+    caller = last.contract.addr
 
-            # optimization: if not aligned with 32-bytes, make it align
-            delta = 32 - (in_offset % 32)
-            # we may already be nearly done, length within 32 bytes
-            if delta > in_size:
-                delta = in_size
+    # completely reset the call work scope
+    # (sub-tree, just a single node to merge into next state effectively)
+    next.call_work = CallWorkScope(
+        mode=CallMode.START,
+        caller=caller,
+        code_addr=addr,
+        read_only=last.contract.read_only,  # inherit readonly mode
+        gas=gas,
+        addr=addr,
+        value=value,
+        input_offset=input_offset,
+        input_size=input_size,
+        return_offset=return_offset,
+        return_size=return_size,
+    )
+    next.exec_mode = ExecMode.CallSetup
 
-            # at most 32 bytes, aligned with the 32-byte memory leaves
-            input_data = last.contract.memory[in_offset:in_offset+delta]
-            # append to existing input (touches 2 packed leaf nodes at most, and the length mixin)
-            next.contract.input += input_data
-
-            # next step will have adjusted params, to continue the copy process
-            # the stack is cleared in the call anyway, and arguments popped away after the call
-            next.contract.stack.tweak_back_u256(in_size-delta, 4)
-            next.contract.stack.tweak_back_u256(in_offset+delta, 3)
-
-        next.sub_index = 2
-        return next
-
-    # part 2: gas stipend
-    if part == 2:
-        gas = next.contract.stack.back_u256(0)
-        value = next.contract.stack.back_u256(2)
-        # None-zero value transfers get a stipend
-
-        if value != uint256(0):
-            gas += CALL_STIPEND
-
-        next.contract.stack.tweak_back_u256(gas, 0)
-        next.sub_index = 3
-        return next
-
-    # part 3: Fail if we're trying to execute above the call depth limit
-    if part == 3:
-        if last.contract.call_depth > CALL_CREATE_DEPTH:
-            next.exec_mode = ExecMode.ErrDepth
-            return next
-
-    # Part 4: TODO: read balance of the current contract/account
-
-    # Part 5: Fail if we're trying to transfer more than the available balance
-    if part == 5:
-        value = next.contract.stack.back_u256(2)
-        if value > 0:
-            # TODO: read earlier retrieved balance
-            amount = 123
-            if amount < value:
-                next.exec_mode = ExecMode.ErrInsufficientBalance
-                return next
-        next.sub_index = 6
-        return next
-
-    # Part 6: Check if account exists, and not a precompile
-    if part == 6:
-        # TODO: check if it exists
-        addr = Address.from_b32(last.contract.stack.back_b32(1))
-        value = next.contract.stack.back_u256(2)
-
-        # TODO: if it does not exist:
-        #  - don't run the call if 0 value and not a precompile
-        #  - create account otherwise
-
-        next.sub_index = 7
-        return next
-
-    # Part 7: transfer value from caller to receiver address
-    if part == 7:
-        addr = last.contract.code_addr
-        # TODO: probably need to split up the transfer in read+write, twice
-        next.sub_index = 8
-        return next
-
-    if part == 8:
-        # TODO: check if precompile, continue with 9 or 10
-        next.sub_index = 9
-        return next
-
-    if part == 9:
-        # running a precompile
-        # TODO steps
-        next.sub_index = 12
-        return next
-
-    if part == 10:
-        # running a regular contract, first retrieve the code
-        next.sub_index = 11
-        # TODO: load code hash from account
-        # TODO: verify code witness with code hash
-        return next
-
-    if part == 11:
-        next.sub_index = 12
-        # if 0 length code, just don't run anything
-        if len(last.contract.code) != 0:
-            next.contract.to = Address.from_b32(last.contract.stack.back_b32(1))
-            next.contract.gas = next.contract.stack.back_u256(0)
-            next.exec_mode = ExecMode.CallPre
-            next.return_to_step = last.hash_tree_root()
-        return next
-
-    if part == 12:
-        # TODO when the call returns, check its result
-        # if it is a REVERT, then we need to consume all gas
-        # TODO: make sure the return data and state-root are preserved (execmode call post)
-        # TODO: call-post also returns gas
-
-        # TODO: depending on call result, push 0 or 1 to the stack
-
-        # and reset the sub-index
-        next.sub_index = 0
-        # continue with next opcode now that the call is done
-        return progress(next)
-
-    raise Exception("out of bounds call step")
+    # stack result push, return data memory copy and gas return is all part of call work
+    return next
 
 
 def op_call_code(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+
+    # TODO: geth uses interpreter.evm.callGasTemp here instead, modifying it during gas computation
+    gas = last.contract.stack.back_u256(0)
+    addr = Address.from_b32(last.contract.stack.back_b32(1))
+    value = last.contract.stack.back_u256(2)
+    input_offset = last.contract.stack.back_u256(3)
+    input_size = last.contract.stack.back_u256(4)
+    return_offset = last.contract.stack.back_u256(5)
+    return_size = last.contract.stack.back_u256(6)
+
+    # pop it all at once
+    next.contract.stack.remove(7)
+
+    if value != uint256(0):
+        gas += CALL_STIPEND
+
+    caller = last.contract.addr
+
+    # completely reset the call work scope
+    # (sub-tree, just a single node to merge into next state effectively)
+    next.call_work = CallWorkScope(
+        mode=CallMode.START,
+        caller=caller,
+        code_addr=addr,
+        read_only=last.contract.read_only,  # inherit readonly mode
+        gas=gas,
+        addr=caller,  # CODE-CALL calls code, without changing address
+        value=value,
+        input_offset=input_offset,
+        input_size=input_size,
+        return_offset=return_offset,
+        return_size=return_size,
+    )
+    next.exec_mode = ExecMode.CallSetup
+
+    # stack result push, return data memory copy and gas return is all part of call work
+    return next
 
 
 def op_delegate_call(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+
+    # TODO: geth uses interpreter.evm.callGasTemp here instead, modifying it during gas computation
+    gas = last.contract.stack.back_u256(0)
+    addr = Address.from_b32(last.contract.stack.back_b32(1))
+    # no value argument, as it's delegated instead
+    input_offset = last.contract.stack.back_u256(2)
+    input_size = last.contract.stack.back_u256(3)
+    return_offset = last.contract.stack.back_u256(4)
+    return_size = last.contract.stack.back_u256(5)
+
+    # pop it all at once
+    next.contract.stack.remove(6)
+
+    # delegate the caller and value
+    caller = last.contract.caller
+    value = last.contract.value
+
+    # completely reset the call work scope
+    # (sub-tree, just a single node to merge into next state effectively)
+    next.call_work = CallWorkScope(
+        mode=CallMode.START,
+        caller=caller,
+        code_addr=addr,
+        read_only=last.contract.read_only,  # inherit readonly mode
+        gas=gas,
+        addr=last.contract.addr,  # like CODE-CALL, the new self-address is the current address
+        value=value,
+        input_offset=input_offset,
+        input_size=input_size,
+        return_offset=return_offset,
+        return_size=return_size,
+    )
+    next.exec_mode = ExecMode.CallSetup
+
+    # stack result push, return data memory copy and gas return is all part of call work
+    return next
 
 
 def op_static_call(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+
+    # TODO: geth uses interpreter.evm.callGasTemp here instead, modifying it during gas computation
+    gas = last.contract.stack.back_u256(0)
+    addr = Address.from_b32(last.contract.stack.back_b32(1))
+    # no value argument, as it would affect state, and this call will be read-only
+    input_offset = last.contract.stack.back_u256(2)
+    input_size = last.contract.stack.back_u256(3)
+    return_offset = last.contract.stack.back_u256(4)
+    return_size = last.contract.stack.back_u256(5)
+
+    # pop it all at once
+    next.contract.stack.remove(6)
+
+    caller = last.contract.addr
+
+    # completely reset the call work scope
+    # (sub-tree, just a single node to merge into next state effectively)
+    next.call_work = CallWorkScope(
+        mode=CallMode.START,
+        caller=caller,
+        code_addr=addr,
+        read_only=True,  # enter read-only mode
+        gas=gas,
+        addr=addr,
+        value=0,  # no value transfer
+        input_offset=input_offset,
+        input_size=input_size,
+        return_offset=return_offset,
+        return_size=return_size,
+    )
+    next.exec_mode = ExecMode.CallSetup
+
+    # stack result push, return data memory copy and gas return is all part of call work
+    return next
 
 
 def op_return(trac: StepsTrace) -> Step:
