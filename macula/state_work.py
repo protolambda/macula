@@ -111,6 +111,12 @@ def state_work_proc(trac: StepsTrace) -> Step:
         if typ == StateWorkType.STORAGE_WRITE:
             value: StateWork_StorageWrite = last.state_work.work.value()
             raise NotImplementedError
+        if typ == StateWorkType.SELF_DESTRUCT_ACCOUNT:
+            value: StateWork_SelfDestruct = last.state_work.work.value()
+            # TODO:
+            # - transfer balance from self_destruct to beneficiery address (can be the same!)
+            # - remove the self_destruct account from the world trie
+            raise NotImplementedError
     if mode == StateWorkMode.CONTINUE_CODE_LOOKUP:
         value: StateWork_GetContractCodeHash = last.state_work.work.value()
         code_hash = value.code_hash_result

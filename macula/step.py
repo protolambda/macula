@@ -310,7 +310,7 @@ class CallWorkScope(Container):
 
 
 class ContractScope(Container):
-    to: Address
+    self_addr: Address
     create: boolean
     call_depth: uint64
     caller: Address
@@ -376,6 +376,8 @@ class StateWorkType(IntEnum):
 
     STORAGE_READ = 14
     STORAGE_WRITE = 15
+
+    SELF_DESTRUCT_ACCOUNT = 16
 
     # TODO: more state ops
 
@@ -444,6 +446,10 @@ class StateWork_StorageWrite(Container):
     key: Bytes32
     value: Bytes32
 
+class StateWork_SelfDestruct(Container):
+    destruct_address: Address
+    beneficiary_address: Address
+
 
 StateWork = Union[  # All these must match the enum StateWorkType
     None,                            # NO_ACTION
@@ -462,6 +468,7 @@ StateWork = Union[  # All these must match the enum StateWorkType
     StateWork_SetNonce,              # SET_NONCE
     StateWork_StorageRead,           # STORAGE_READ
     StateWork_StorageWrite,          # STORAGE_WRITE
+    StateWork_SelfDestruct,          # SELF_DESTRUCT_ACCOUNT
 ]
 
 class StateWorkMode(IntEnum):

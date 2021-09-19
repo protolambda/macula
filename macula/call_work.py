@@ -7,7 +7,7 @@ from .params import CALL_CREATE_DEPTH
 
 class CallMode(IntEnum):
     START = 0x00
-    # todo; more pre steps?
+    LOAD_SCOPE = 0x01
     RESET_INPUT = 0x02
     LOAD_INPUT = 0x03
     CALL_DEPTH_CHECK = 0x04
@@ -38,6 +38,16 @@ def call_work_proc(trac: StepsTrace) -> Step:
         # return-to-step, so we can revert changes to contract etc. if call completes
         # A successful call will restore this step while preserving the state-root, returning remaining gas, etc.
         next.return_to_step = last.copy()
+        next.call_work.mode = CallMode.LOAD_SCOPE
+        return next
+    if mode == CallMode.LOAD_SCOPE:
+        next.contract.caller = last.call_work.caller
+        next.contract.code_addr = last.call_work.code_addr
+        next.contract.read_only = last.call_work.read_only
+        next.contract.gas = last.call_work.gas
+        next.contract.self_addr = last.call_work.addr
+        next.contract.value = last.call_work.value
+
         next.call_work.mode = CallMode.RESET_INPUT
         return next
     if mode == CallMode.RESET_INPUT:

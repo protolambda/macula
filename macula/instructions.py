@@ -314,7 +314,7 @@ def op_sha3(trac: StepsTrace) -> Step:
 def op_address(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    next.contract.stack.push_b32(last.contract.addr.to_b32())
+    next.contract.stack.push_b32(last.contract.self_addr.to_b32())
     return progress(next)
 
 
@@ -1025,8 +1025,28 @@ def op_stop(trac: StepsTrace) -> Step:
 def op_self_destruct(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+    # Do we have self-destructed yet?
+    if last.state_work.mode == StateWorkMode.RETURNED:
+        last.state_work.mode = StateWorkMode.IDLE  # kindly reset the mode, to not mess up future uses.
+        # value: StateWork_SelfDestruct = last.state_work.work.value()
+        # pop the beneficiary address from the stack
+        next.contract.stack.pop()
+        return progress(next)
+    else:
+        assert last.state_work.mode == StateWorkMode.IDLE
+        beneficiary = Address.from_b32(last.contract.stack.peek_b32())
+        next.state_work.mode = StateWorkMode.REQUESTING
+        next.state_work.mode_on_finish = StateWorkMode.RETURNED
+        next.state_work.work.change(
+            selector=StateWorkType.SELF_DESTRUCT_ACCOUNT,
+            value=StateWork_SelfDestruct(
+                destruct_address=last.contract.self_addr,
+                beneficiary_address=beneficiary
+            )
+        )
+        next.return_to_step.change(selector=1, value=last)
+        next.exec_mode = ExecMode.StateWork
+        return next
 
 
 def make_log(size: int) -> Processor:
