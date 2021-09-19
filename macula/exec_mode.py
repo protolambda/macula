@@ -31,6 +31,13 @@ class ExecMode(IntEnum):
 
     CallRevert = 0x33
 
+    # Sets up the state, handles errors, runs init code
+    CreateSetup = 0x34
+    # after init completes, create the contract
+    CreateInitPost = 0x35
+    CreateInitRevert = 0x36
+    CreateInitErr = 0x37
+
     # Stops execution of a transaction
     # (block processing continues, tx is just included as "failed", and still pays the fee etc.)
     ErrSTOP = 0x40

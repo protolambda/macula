@@ -3,6 +3,7 @@ from .step import *
 from .exec_mode import *
 from .jump_table import Operation, FRONTIER
 from .call_work import call_work_proc
+from .create_work import create_work_setup_proc, create_work_post_proc, create_work_revert_proc, create_work_err_proc
 from .state_work import state_work_proc
 from .mpt_work import mpt_work_proc
 from .block import exec_pre_block, exec_block_pre_state_load, exec_block_history_load,\
@@ -50,6 +51,15 @@ def next_step(trac: StepsTrace) -> Step:
         return exec_call_revert(trac)
     if ExecMode.ErrSTOP <= mode <= ExecMode.ErrInsufficientBalance:
         return exec_call_error(trac)
+
+    if mode == ExecMode.CreateSetup:
+        return create_work_setup_proc(trac)
+    if mode == ExecMode.CreateInitPost:
+        return create_work_post_proc(trac)
+    if mode == ExecMode.CreateInitRevert:
+        return create_work_revert_proc(trac)
+    if mode == ExecMode.CreateInitErr:
+        return create_work_err_proc(trac)
 
     # Interpreter loop consists of stack/memory/gas checks, and then opcode execution.
     if mode == ExecMode.OpcodeLoad:
@@ -123,12 +133,15 @@ def exec_call_post(trac: StepsTrace) -> Step:
     next.contract.return_gas(last.contract.gas)
     next.contract.stack.push_u256(1)  # success
 
-    if last.contract.call_depth == 0:
+    if last.contract.is_init_code:
+        next.exec_mode = ExecMode.CreateInitPost
+    elif last.contract.call_depth <= 1:
         next.exec_mode = ExecMode.BlockTxSuccess
     else:
         # Continue processing in caller, exactly where we left of, next opcode
         next.exec_mode = ExecMode.OpcodeLoad
         next.contract.pc += 1
+
     return next
 
 
@@ -144,7 +157,9 @@ def exec_call_revert(trac: StepsTrace) -> Step:
     next.contract.return_gas(last.contract.gas)
     next.contract.stack.push_u256(0)  # fail
 
-    if last.contract.call_depth == 0:
+    if last.contract.is_init_code:
+        next.exec_mode = ExecMode.CreateInitRevert
+    elif last.contract.call_depth <= 1:
         next.exec_mode = ExecMode.BlockTxRevert
     else:
         # Continue processing in parent, exactly where we left of, next opcode
@@ -164,7 +179,9 @@ def exec_call_error(trac: StepsTrace) -> Step:
     # And don't preserve the state-root changes, and don't return data
 
     # keep bubbling up the error, until we can mark the transaction as failed
-    if last.contract.call_depth == 0:
+    if last.contract.is_init_code:
+        next.exec_mode = ExecMode.CreateInitErr
+    elif last.contract.call_depth <= 1:
         next.exec_mode = ExecMode.BlockTxErr
 
     return next

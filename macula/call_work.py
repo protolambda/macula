@@ -1,31 +1,7 @@
-from enum import IntEnum
-from .step import Step, Input
+from .step import Step, Input, CallMode
 from .trace import StepsTrace
 from .exec_mode import ExecMode
 from .params import CALL_CREATE_DEPTH
-
-
-class CallMode(IntEnum):
-    START = 0x00
-    LOAD_SCOPE = 0x01
-    RESET_INPUT = 0x02
-    LOAD_INPUT = 0x03
-    CALL_DEPTH_CHECK = 0x04
-    READ_BALANCE = 0x05
-    CHECK_TRANSFER_VALUE = 0x06
-    CHECK_ACCOUNT_EXISTS = 0x07
-    CHECK_IF_PRECOMPILE = 0x08
-    # if the account didn't exist yet
-    CREATE_TO_ACCOUNT = 0x09
-    TRANSFER_VALUE = 0x0a
-    LOAD_CODE = 0x0b  # branches into appropriate type of contract load
-    LOAD_PRECOMPILE = 0x0c
-    LOAD_REGULAR_CONTRACT_CODE_HASH = 0x0d
-    LOAD_REGULAR_CONTRACT_CODE = 0x0e
-    CHECK_RUNNING_EMPTY_CODE = 0x0f
-    RUN_CONTRACT = 0x10
-
-    # call results are handled by call-post/err/revert processing in the interpreter loop
 
 
 def call_work_proc(trac: StepsTrace) -> Step:
@@ -47,6 +23,7 @@ def call_work_proc(trac: StepsTrace) -> Step:
         next.contract.gas = last.call_work.gas
         next.contract.self_addr = last.call_work.addr
         next.contract.value = last.call_work.value
+        next.contract.is_init_code = False
 
         next.call_work.mode = CallMode.RESET_INPUT
         return next

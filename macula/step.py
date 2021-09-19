@@ -319,6 +319,29 @@ class TxScope(Container):
     logs: List[Log, MAX_LOGS_PER_TRANSACTION]
 
 
+class CallMode(IntEnum):
+    START = 0x00
+    LOAD_SCOPE = 0x01
+    RESET_INPUT = 0x02
+    LOAD_INPUT = 0x03
+    CALL_DEPTH_CHECK = 0x04
+    READ_BALANCE = 0x05
+    CHECK_TRANSFER_VALUE = 0x06
+    CHECK_ACCOUNT_EXISTS = 0x07
+    CHECK_IF_PRECOMPILE = 0x08
+    # if the account didn't exist yet
+    CREATE_TO_ACCOUNT = 0x09
+    TRANSFER_VALUE = 0x0a
+    LOAD_CODE = 0x0b  # branches into appropriate type of contract load
+    LOAD_PRECOMPILE = 0x0c
+    LOAD_REGULAR_CONTRACT_CODE_HASH = 0x0d
+    LOAD_REGULAR_CONTRACT_CODE = 0x0e
+    CHECK_RUNNING_EMPTY_CODE = 0x0f
+    RUN_CONTRACT = 0x10
+
+    # call results are handled by call-post/err/revert processing in the interpreter loop
+
+
 # When entering and exiting a contract, a scope
 class CallWorkScope(Container):
     mode: uint8  # see CallMode enum
@@ -335,6 +358,45 @@ class CallWorkScope(Container):
     input_size: uint256
     return_offset: uint256
     return_size: uint256
+
+
+class CreateMode(IntEnum):
+    START_CREATE = 0x00
+    GET_CALLER_NONCE = 0x01
+    COMPUTE_CREATE_CODE_HASH = 0x01
+
+    START_CREATE2 = 0x10
+    COMPUTE_CREATE2_CODE_HASH = 0x11
+
+    CREATE_DEPTH_CHECK = 0x20
+    LOAD_INIT_CODE = 0x21
+    READ_BALANCE = 0x22
+    CHECK_TRANSFER_VALUE = 0x23
+    INCREMENT_NONCE = 0x24
+    ADD_TO_ACCESS_LIST = 0x25
+    CHECK_CONTRACT_ALREADY_EXISTS = 0x26
+    SNAPSHOT = 0x27
+    CREATE_ACCOUNT = 0x28
+    TRANSFER_VALUE = 0x29
+
+    # the code runs and outputs the actual contract to deploy
+    PREPARE_INIT_CALL = 0x30
+    RUN_INIT_CONTRACT = 0x31
+
+    CHECK_CODE_SIZE = 0x40
+    CHECK_CODE_STARTING_BYTE = 0x41
+    USE_CREATE_GAS = 0x42
+    SET_ACCOUNT_CODE = 0x43
+
+
+class CreateWorkScope(Container):
+    mode: uint8  # see CreateMode enum
+    value: uint256
+    input_offset: uint64
+    input_size: uint64
+    gas: uint256
+    # Used in create2 only
+    salt: Bytes32
 
 
 class ContractScope(Container):
@@ -359,6 +421,9 @@ class ContractScope(Container):
     value: uint256
     # Make storage read-only, to support STATIC-CALL
     read_only: boolean
+
+    # If init-code, then the call continues with contract-creation
+    is_init_code: boolean
 
     # We generalize the opcode read from the code at PC,
     # and cache it here to not re-read the code every step of the opcode.
@@ -607,6 +672,7 @@ class Step(Container):
     # work scopes are like scratch-pads; they can start new work,
     # but cannot be used recursively without using return_to_step to isolate the changes.
     call_work: CallWorkScope
+    create_work: CreateWorkScope
     state_work: StateWorkScope
     mpt_work: MPTWorkScope
 

@@ -799,15 +799,50 @@ def op_gas(trac: StepsTrace) -> Step:
 def op_create(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+
+    value = last.contract.stack.back_u256(0)
+    offset = last.contract.stack.back_u256(1)
+    size = last.contract.stack.back_u256(2)
+    next.contract.stack.remove(3)
+
+    gas = last.contract.gas
+    # EIP 150
+    gas -= gas // 64
+
+    next.create_work = CreateWorkScope(
+        mode=CreateMode.START_CREATE,
+        value=value,
+        input_offset=offset,
+        input_size=size,
+        gas=gas,
+        salt=Bytes32(),
+    )
+    return next
 
 
 def op_create2(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO
-    raise NotImplementedError
+
+    value = last.contract.stack.back_u256(0)
+    offset = last.contract.stack.back_u256(1)
+    size = last.contract.stack.back_u256(2)
+    salt = last.contract.stack.back_b32(3)
+    next.contract.stack.remove(4)
+
+    gas = last.contract.gas
+    # EIP 150
+    gas -= gas // 64
+
+    next.create_work = CreateWorkScope(
+        mode=CreateMode.START_CREATE2,
+        value=value,
+        input_offset=offset,
+        input_size=size,
+        gas=gas,
+        salt=salt,
+    )
+    return next
 
 
 def op_call(trac: StepsTrace) -> Step:
