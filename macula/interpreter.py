@@ -122,7 +122,6 @@ def exec_call_post(trac: StepsTrace) -> Step:
     next.contract.ret_data = last.contract.ret_data
     next.contract.return_gas(last.contract.gas)
     next.contract.stack.push_u256(1)  # success
-    # TODO: return data copy
 
     if last.contract.call_depth == 0:
         next.exec_mode = ExecMode.BlockTxSuccess
@@ -139,10 +138,11 @@ def exec_call_revert(trac: StepsTrace) -> Step:
     parent_step = last.return_to_step.value()
     assert parent_step is not None
     next = parent_step.copy()
-    # Next step is a lot like the parent, but we return gas, set return data, and mark the error
+    # Next step is a lot like the parent, but we return gas,
+    # set return data, and mark the error, without preserving state changes.
+    next.contract.ret_data = last.contract.ret_data
     next.contract.return_gas(last.contract.gas)
     next.contract.stack.push_u256(0)  # fail
-    # TODO: return data copy
 
     if last.contract.call_depth == 0:
         next.exec_mode = ExecMode.BlockTxRevert
@@ -161,7 +161,7 @@ def exec_call_error(trac: StepsTrace) -> Step:
     assert parent_step is not None
     next = parent_step.copy()
     # This is an error, not a revert, so consume all gas: don't return any
-    # And don't preserve the state-root changes
+    # And don't preserve the state-root changes, and don't return data
 
     # keep bubbling up the error, until we can mark the transaction as failed
     if last.contract.call_depth == 0:

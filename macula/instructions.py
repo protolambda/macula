@@ -977,17 +977,41 @@ def op_static_call(trac: StepsTrace) -> Step:
 def op_return(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO implement return-data from memory copy
-    next.exec_mode = ExecMode.CallPost
-    return next
+
+    size = last.contract.stack.back_u256(1)
+    if size > 0:
+        # TODO: copying one byte at a time because it is simple, but could try batch in <= 32 at a time
+        offset = last.contract.stack.back_u256(0)
+        byte_value = last.contract.memory[offset]  # interpreter already did gas check and memory expansion
+        next.contract.ret_data.append(byte_value)
+        next.contract.stack.tweak_back_u256(size-1, 1)
+        next.contract.stack.tweak_back_u256(offset+1, 0)
+        return next
+    else:
+        next.contract.stack.pop()
+        next.contract.stack.pop()
+        next.exec_mode = ExecMode.CallPost
+        return next
 
 
 def op_revert(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
-    # TODO implement return-data from memory copy
-    next.exec_mode = ExecMode.CallRevert
-    return next
+
+    size = last.contract.stack.back_u256(1)
+    if size > 0:
+        # TODO: copying one byte at a time because it is simple, but could try batch in <= 32 at a time
+        offset = last.contract.stack.back_u256(0)
+        byte_value = last.contract.memory[offset]  # interpreter already did gas check and memory expansion
+        next.contract.ret_data.append(byte_value)
+        next.contract.stack.tweak_back_u256(size-1, 1)
+        next.contract.stack.tweak_back_u256(offset+1, 0)
+        return next
+    else:
+        next.contract.stack.pop()
+        next.contract.stack.pop()
+        next.exec_mode = ExecMode.CallRevert
+        return next
 
 
 def op_stop(trac: StepsTrace) -> Step:
