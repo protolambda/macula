@@ -29,6 +29,8 @@ class ExecMode(IntEnum):
     # Any error should follow up with running call-post processing
     CallPost = 0x32
 
+    CallRevert = 0x33
+
     # Stops execution of a transaction
     # (block processing continues, tx is just included as "failed", and still pays the fee etc.)
     ErrSTOP = 0x40
@@ -41,7 +43,6 @@ class ExecMode(IntEnum):
     ErrReturnDataOutOfBounds = 0x47
     ErrDepth = 0x48
     ErrInsufficientBalance = 0x49
-    ErrExecutionReverted = 0x4a
 
     # These errors are more critical: the block is invalid
     ErrInvalidTransactionType = 0x50
@@ -64,6 +65,11 @@ class ExecMode(IntEnum):
 
     # Loop through transactions till everything is processed
     BlockTxLoop = 0x73
+
+    # when the transaction finishes, block tx loop continues in TxSuccess, TxErr or TxRevert
+    BlockTxSuccess = 0x74
+    BlockTxErr = 0x75
+    BlockTxRevert = 0x76
 
     # when done with the block transactions
     BlockPost = 0x80

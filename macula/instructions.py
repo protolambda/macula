@@ -986,7 +986,7 @@ def op_revert(trac: StepsTrace) -> Step:
     last = trac.last()
     next = last.copy()
     # TODO implement return-data from memory copy
-    next.exec_mode = ExecMode.ErrExecutionReverted
+    next.exec_mode = ExecMode.CallRevert
     return next
 
 

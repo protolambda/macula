@@ -25,9 +25,7 @@ class CallMode(IntEnum):
     CHECK_RUNNING_EMPTY_CODE = 0x0f
     RUN_CONTRACT = 0x10
 
-    HANDLE_SUCCESS = 0x20  # push 1 on stack
-    HANDLE_REVERT = 0x21  # push 0 on stack
-    HANDLE_ERROR = 0x22  # push 0 on stack, consume remaining gas
+    # call results are handled by call-post/err/revert processing in the interpreter loop
 
 
 def call_work_proc(trac: StepsTrace) -> Step:
@@ -37,7 +35,9 @@ def call_work_proc(trac: StepsTrace) -> Step:
     mode = CallMode(last.call_work.mode)
 
     if mode == CallMode.START:
-        # TODO: return-to-step, so we can revert changes to contract etc. if call completes
+        # return-to-step, so we can revert changes to contract etc. if call completes
+        # A successful call will restore this step while preserving the state-root, returning remaining gas, etc.
+        next.return_to_step = last.copy()
         next.call_work.mode = CallMode.RESET_INPUT
         return next
     if mode == CallMode.RESET_INPUT:

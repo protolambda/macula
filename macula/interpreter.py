@@ -46,6 +46,10 @@ def next_step(trac: StepsTrace) -> Step:
         return exec_call_pre(trac)
     if mode == ExecMode.CallPost:
         return exec_call_post(trac)
+    if mode == ExecMode.CallRevert:
+        return exec_call_revert(trac)
+    if ExecMode.ErrSTOP <= mode <= ExecMode.ErrInsufficientBalance:
+        return exec_call_error(trac)
 
     # Interpreter loop consists of stack/memory/gas checks, and then opcode execution.
     if mode == ExecMode.OpcodeLoad:
@@ -64,10 +68,6 @@ def next_step(trac: StepsTrace) -> Step:
         return exec_update_memory_size(trac)
     if mode == ExecMode.OpcodeRun:
         return exec_opcode_run(trac)
-
-    # check if any transaction processing error
-    if ExecMode.ErrSTOP <= mode <= ExecMode.ErrExecutionReverted:
-        return exec_error(trac)
 
     # TODO: if the block is invalid, then exit with generic FAIL? or DONE with error indication?
     if ExecMode.ErrInvalidTransactionType <= mode <= ExecMode.ErrInvalidTransactionSig:
@@ -111,19 +111,62 @@ def exec_call_pre(trac: StepsTrace) -> Step:
 
 
 def exec_call_post(trac: StepsTrace) -> Step:
-    # note; call-depth will unwind itself, since we copy it from the caller.
+    # note; call-depth will unwind itself, since we copy it from the parent.
     last = trac.last()
-    caller_step = last.return_to_step.value()
-    assert caller_step is not None
-    next = caller_step.copy()
-    # Next step is a lot like the caller, but we preserve the return data, return unused gas, and preserve the state
+    parent_step = last.return_to_step.value()
+    assert parent_step is not None
+    next = parent_step.copy()
+    # Next step is a lot like the parent, but we preserve the return data, return unused gas, and preserve the state
     # TODO maybe also track past log events, to reconstruct receipt root for block fraud proof
     next.state_root = last.state_root
     next.contract.ret_data = last.contract.ret_data
     next.contract.return_gas(last.contract.gas)
+    next.contract.stack.push_u256(1)  # success
+    # TODO: return data copy
 
-    # Continue processing in caller, exactly where we left of, next opcode
-    next.exec_mode = ExecMode.OpcodeLoad
+    if last.contract.call_depth == 0:
+        next.exec_mode = ExecMode.BlockTxSuccess
+    else:
+        # Continue processing in caller, exactly where we left of, next opcode
+        next.exec_mode = ExecMode.OpcodeLoad
+        next.contract.pc += 1
+    return next
+
+
+def exec_call_revert(trac: StepsTrace) -> Step:
+    # note; call-depth will unwind itself, since we copy it from the parent.
+    last = trac.last()
+    parent_step = last.return_to_step.value()
+    assert parent_step is not None
+    next = parent_step.copy()
+    # Next step is a lot like the parent, but we return gas, set return data, and mark the error
+    next.contract.return_gas(last.contract.gas)
+    next.contract.stack.push_u256(0)  # fail
+    # TODO: return data copy
+
+    if last.contract.call_depth == 0:
+        next.exec_mode = ExecMode.BlockTxRevert
+    else:
+        # Continue processing in parent, exactly where we left of, next opcode
+        next.exec_mode = ExecMode.OpcodeLoad
+        next.contract.pc += 1
+
+    return next
+
+
+def exec_call_error(trac: StepsTrace) -> Step:
+    # note; call-depth will unwind itself, since we copy it from the parent.
+    last = trac.last()
+    parent_step = last.return_to_step.value()
+    assert parent_step is not None
+    next = parent_step.copy()
+    # This is an error, not a revert, so consume all gas: don't return any
+    # And don't preserve the state-root changes
+
+    # keep bubbling up the error, until we can mark the transaction as failed
+    if last.contract.call_depth == 0:
+        next.exec_mode = ExecMode.BlockTxErr
+
     return next
 
 
@@ -264,24 +307,6 @@ def exec_opcode_run(trac: StepsTrace) -> Step:
     last = trac.last()
     operation = operation_info(last.contract.op, last.block.block_number)
     return operation.proc(trac)
-
-
-def exec_error(trac: StepsTrace) -> Step:
-    # Stops execution
-    #
-    # Any error should follow up with running call-post processing
-    last = trac.last()
-    next = last.copy()
-    # if not a natural revert, then consume all gas.
-    if last.exec_mode != ExecMode.ErrExecutionReverted:
-        next.contract.gas = 0
-
-    # TODO: if a revert, then complete the call (without preserving state-root),
-    #  preserve consumed gas, and return data
-
-    # TODO: if not a revert, but an actual error,
-    #  then halt the interpreter and mark the tx as failed.
-    raise NotImplementedError
 
 
 def to_word_size(size: uint64) -> uint64:

@@ -553,6 +553,8 @@ class Step(Container):
     tx: TxScope
     contract: ContractScope
 
+    # work scopes are like scratch-pads; they can start new work,
+    # but cannot be used recursively without using return_to_step to isolate the changes.
     call_work: CallWorkScope
     state_work: StateWorkScope
     mpt_work: MPTWorkScope
