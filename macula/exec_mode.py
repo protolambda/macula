@@ -53,8 +53,9 @@ class ExecMode(IntEnum):
 
     # These errors are more critical: the block is invalid
     ErrInvalidTransactionType = 0x50
-    ErrInvalidTransactionChain = 0x51
+    ErrInvalidTransactionChainId = 0x51
     ErrInvalidTransactionSig = 0x52
+    ErrInvalidTransactionPubkey = 0x53
 
     # Special state machines
     StateWork = 0x60

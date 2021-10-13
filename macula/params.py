@@ -137,3 +137,6 @@ BLS12381MAP_G2GAS = 110000  # Gas price for BLS12-381 mapping field element to G
 # up to half the consumed gas could be refunded. Redefined as 1/5th in EIP-3529
 REFUND_QUOTIENT = 2
 REFUND_QUOTIENT_EIP3529 = 5
+
+# TODO
+CHAIN_ID = 42

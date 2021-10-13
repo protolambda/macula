@@ -25,3 +25,10 @@ remerkleable_settings.merkle_hash = merkle_hash
 remerkleable_settings.init_zero_hashes()
 
 
+def ecrecover(sig_hash: bytes, sig: bytes) -> (bytes, bool):
+    # TODO
+    return b"\x00" * 65, False
+
+def validate_signature_values(v: int, r: int, s: int, homestead: bool) -> bool:
+    # TODO
+    return False

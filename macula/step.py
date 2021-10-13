@@ -28,13 +28,13 @@ class RollupSystemTransaction(Container):
 BYTES_PER_LOGS_BLOOM = 256
 MAX_BYTES_PER_OPAQUE_TRANSACTION = 2 ** 20
 MAX_TRANSACTIONS_PER_PAYLOAD = 2 ** 14
-Hash32 = Bytes32
-OpaqueTransaction = ByteList[MAX_BYTES_PER_OPAQUE_TRANSACTION]
+MAX_STORAGE_KEYS_PER_ACCESS_LIST_ENTRY = 2 ** 16
+MAX_ACCESS_LIST_ENTRIES_PER_TX = 2 ** 16
 
-# 0: OpaqueTransaction
-# 1-41: reserved
-# 42: RollupSystemTransaction  (ID is TBD, fun placeholder for now)
-Transaction = Union[OpaqueTransaction, *([None] * (42 - 1)), RollupSystemTransaction]
+Hash32 = Bytes32
+
+# Transaction, full envelope in encoded form, following EIP 2718
+OpaqueTransaction = ByteList[MAX_BYTES_PER_OPAQUE_TRANSACTION]
 
 
 # Eth1 block, based on eth2 consensus-specs,
@@ -49,7 +49,7 @@ class MinimalExecutionPayload(Container):
     block_number: uint64  # 'number' in the yellow paper
     gas_limit: uint64
     timestamp: uint64
-    transactions: List[Transaction, MAX_TRANSACTIONS_PER_PAYLOAD]
+    transactions: List[OpaqueTransaction, MAX_TRANSACTIONS_PER_PAYLOAD]
 
 
 class BlockHistory(Vector[Bytes32, 256]):
@@ -311,11 +311,30 @@ class BlockScope(Container):
     receipts: List[Receipt, MAX_TRANSACTIONS_PER_PAYLOAD]
 
 
+class AccessListEntry(Container):
+    address: Address
+    storage_keys: List[Bytes32, MAX_STORAGE_KEYS_PER_ACCESS_LIST_ENTRY]
+
+
+# based on definition in EIP 1559
+class NormalizedTransaction(Container):
+    signer_address: Address
+    signer_nonce: uint64
+    max_priority_fee_per_gas: uint256
+    max_fee_per_gas: uint256
+    gas_limit: uint64
+    destination: Address
+    amount: uint256
+    payload: ByteList[MAX_BYTES_PER_OPAQUE_TRANSACTION]
+    access_list: List[AccessListEntry, MAX_ACCESS_LIST_ENTRIES_PER_TX]
+
+
 class TxScope(Container):
     origin: Address
     tx_index: uint64
     gas_price: uint64
-    current_tx: Transaction
+    current_tx: OpaqueTransaction
+    current_tx_normalized: NormalizedTransaction
     logs: List[Log, MAX_LOGS_PER_TRANSACTION]
 
 
