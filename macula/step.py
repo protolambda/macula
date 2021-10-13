@@ -324,18 +324,35 @@ class NormalizedTransaction(Container):
     max_fee_per_gas: uint256
     gas_limit: uint64
     destination: Address
+    is_contract_creation: boolean
     amount: uint256
     payload: ByteList[MAX_BYTES_PER_OPAQUE_TRANSACTION]
     access_list: List[AccessListEntry, MAX_ACCESS_LIST_ENTRIES_PER_TX]
 
 
 class TxScope(Container):
-    origin: Address
     tx_index: uint64
-    gas_price: uint64
     current_tx: OpaqueTransaction
     current_tx_normalized: NormalizedTransaction
     logs: List[Log, MAX_LOGS_PER_TRANSACTION]
+    mode: uint8  # See TxMode
+
+
+class TxMode(IntEnum):
+    # 1. the nonce of the message caller is correct
+    CHECK_NONCE = 1
+    # 2. caller has enough balance to cover transaction fee(gaslimit * gasprice)
+    CHECK_BALANCE = 2
+    # 3. the amount of gas required is available in the block
+    CHECK_GAS_AVAILABLE = 3
+    # 4. the purchased gas is enough to cover intrinsic usage
+    CHECK_INTRINSIC_GAS = 4
+    # 5. there is no overflow when calculating intrinsic gas
+    CHECK_INTRINSIC_GAS_OVERFLOW = 5
+    # 6. caller has enough balance to cover asset transfer for **topmost** call
+    CHECK_TOPMOST_TRANSFER = 6
+
+    SETUP_APPLY_TX = 7
 
 
 class CallMode(IntEnum):

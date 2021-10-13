@@ -4,9 +4,9 @@ from enum import IntEnum
 class ExecMode(IntEnum):
     BlockPre = 0
 
-    TxLoad = 0x01
-    TxSig = 0x02
-    TxFeesPre = 0x03
+    TxLoad = 0x01  # includes transaction loading
+    TxFeesPre = 0x02
+    TxProc = 0x03
     TxFeesPost = 0x04
 
     # Interpreter loop consists of stack/memory/gas checks, and then opcode execution.
@@ -56,6 +56,7 @@ class ExecMode(IntEnum):
     ErrInvalidTransactionChainId = 0x51
     ErrInvalidTransactionSig = 0x52
     ErrInvalidTransactionPubkey = 0x53
+    ErrInvalidTransactionDest = 0x54
 
     # Special state machines
     StateWork = 0x60

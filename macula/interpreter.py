@@ -8,7 +8,7 @@ from .state_work import state_work_proc
 from .mpt_work import mpt_work_proc
 from .block import exec_pre_block, exec_block_pre_state_load, exec_block_history_load,\
     exec_block_calc_base_fee, exec_block_tx_loop, exec_post_block
-from .tx import exec_tx_load
+from .tx import exec_tx_load, tx_work_proc
 
 class Rules(object):
     ...  # TODO: some EIPs are activated only at certain block numbers
@@ -34,8 +34,8 @@ def next_step(trac: StepsTrace) -> Step:
 
     if mode == ExecMode.TxLoad:
         return exec_tx_load(trac)
-    if mode == ExecMode.TxSig:
-        raise NotImplementedError  # TODO signatures
+    if mode == ExecMode.TxProc:
+        return tx_work_proc(trac)
     if mode == ExecMode.TxFeesPre:  # TODO validate fee stuff
         raise NotImplementedError
     if mode == ExecMode.TxFeesPost:  # TODO: charge tx fees
@@ -80,7 +80,7 @@ def next_step(trac: StepsTrace) -> Step:
         return exec_opcode_run(trac)
 
     # TODO: if the block is invalid, then exit with generic FAIL? or DONE with error indication?
-    if ExecMode.ErrInvalidTransactionType <= mode <= ExecMode.ErrInvalidTransactionSig:
+    if ExecMode.ErrInvalidTransactionType <= mode <= ExecMode.ErrInvalidTransactionPubkey:
         raise Exception("invalid block")
 
     if mode == ExecMode.StateWork:
