@@ -1,5 +1,9 @@
 # Macula
 
+DEPRECATED. See https://github.com/ethereum-optimism/cannon/ for full EVM fraud proof.
+
+---
+
 Experimental python optimistic rollup fraud-proof generation tech by @protolambda.
 
 Working on a python version for brevity and simplicity.
